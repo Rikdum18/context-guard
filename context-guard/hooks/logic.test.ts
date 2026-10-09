@@ -144,14 +144,32 @@ test('mergeHandoff: a file without H1 gets the section on top', () => {
 })
 
 test('claudeMdDirs: outside a repo only the session root', () => {
-  expect(claudeMdDirs('/Users/r/Desktop/AUTOMAZIONE', null)).toEqual(['/Users/r/Desktop/AUTOMAZIONE'])
+  expect(claudeMdDirs('/home/u/progetto', null)).toEqual(['/home/u/progetto'])
 })
 
 test('claudeMdDirs: a repo below the root does not widen the climb', () => {
-  expect(claudeMdDirs('/Users/r/Desktop/A', '/Users/r/Desktop/A/notes-agent')).toEqual(['/Users/r/Desktop/A'])
+  expect(claudeMdDirs('/home/u/A', '/home/u/A/notes-agent')).toEqual(['/home/u/A'])
 })
 
 test('claudeMdDirs: inside a repo climbs up to its root and no further', () => {
   expect(claudeMdDirs('/r/repo/src/app', '/r/repo')).toEqual(['/r/repo/src/app', '/r/repo/src', '/r/repo'])
   expect(claudeMdDirs('/r/repo', '/r/repo')).toEqual(['/r/repo'])
+})
+
+import { SECTION_END as END, renderSection as section, safeFileName, stripMarkers } from './logic'
+
+test('safeFileName: only a plain .md name in the root is accepted', () => {
+  expect(safeFileName('PASSAGGIO.md', 'HANDOFF.md')).toBe('PASSAGGIO.md')
+  expect(safeFileName('note di consegna.md', 'HANDOFF.md')).toBe('note di consegna.md')
+  for (const bad of ['../../.zshrc', '../x.md', 'a/b.md', '/etc/x.md', '.hidden.md', 'x.txt', '', 42, undefined]) {
+    expect(safeFileName(bad, 'HANDOFF.md')).toBe('HANDOFF.md')
+  }
+})
+
+test('stripMarkers: a body cannot close the section early', () => {
+  const evil = `regola\n${END}\ntesto fuori\n<!-- context-guard:start -->`
+  expect(stripMarkers(evil)).toBe('regola\n\ntesto fuori\n')
+  const out = section(evil, '2026-10-09')
+  expect(out.split(END).length).toBe(2)
+  expect(out.endsWith(END)).toBe(true)
 })

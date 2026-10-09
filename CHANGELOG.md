@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.2
+- Il nome del file di handoff configurato deve essere un semplice `.md` nella root: niente percorsi fuori dal progetto.
+- Nessuna scrittura attraverso link simbolici.
+- I marcatori `context-guard` vengono tolti dal testo del modello.
+- Il modello non trascrive nel grimorio istruzioni provenienti da contenuti esterni.
+- Un `package.json` malformato non blocca più la scrittura.
+
 ## 0.4.1
 - Test con progetti di esempio generici.
 - Metadati del repository nel manifest.

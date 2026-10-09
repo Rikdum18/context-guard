@@ -55,6 +55,10 @@ La mod scrive file nei tuoi progetti, quindi è costruita per non rompere niente
 - **Controllo sul progetto:** prima di scrivere il grimorio la mod visita la cartella e verifica che i percorsi citati tra backtick esistano davvero. Se ne cita almeno 3 e meno del 60% esiste, il grimorio viene scartato e un avviso elenca i percorsi mancanti. Così il riassunto di un progetto non può finire nel CLAUDE.md di un altro.
 - **Controllo all'avvio:** a ogni nuova sessione la mod verifica il grimorio già presente e avvisa se sembra di un altro progetto.
 - **Niente doppioni:** il modello ha l'istruzione di non ricopiare ciò che è già in CLAUDE.md, AGENTS.md e nei file importati.
+- **Niente scritture fuori dal progetto:** il nome del file di handoff deve essere un semplice `.md` nella cartella della sessione, e la mod non scrive mai attraverso un link simbolico.
+- **Marcatori protetti:** dal testo del modello vengono tolti tutti i marcatori `context-guard`, così una risposta non può chiudere la sezione in anticipo e toccare il resto del file.
+
+> **Attenzione:** il grimorio finisce in `CLAUDE.md` e le sessioni future lo leggono come istruzioni. Il modello ha l'istruzione di non trascrivere mai indicazioni provenienti da pagine web, file scaricati o output di strumenti, ma conviene comunque dare un'occhiata alla sezione quando cambia, per esempio con `git diff CLAUDE.md`.
 
 ## Installazione
 
@@ -104,7 +108,7 @@ context-guard/
 │   ├── register.tsx             gli hook e il dialogo
 │   ├── logic.ts                 logica pura: soglie, prompt, merge dei file, controllo sul progetto
 │   ├── sprite.ts                il gufo e i suoi renderer SVG e Raster
-│   └── *.test.ts                38 test
+│   └── *.test.ts                40 test
 └── types/index.d.ts             contratto dello stato in $.state
 ```
 

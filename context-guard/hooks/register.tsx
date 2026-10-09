@@ -15,6 +15,7 @@ import {
   pickHandoffFile,
   forkPrompt,
   renderSection,
+  safeFileName,
   spliceSection,
   splitReply,
   thresholdsOf,
@@ -50,6 +51,11 @@ async function setGuard($: EngineInterface, fn: (s: GuardState) => GuardState): 
 
 async function percentNow($: EngineInterface): Promise<number | undefined> {
   return (await $.session.usage()).context.percent
+}
+
+/** True when `path` is a symbolic link: the mod never writes through one, so a write cannot land outside the project. */
+async function isLink($: EngineInterface, path: string): Promise<boolean> {
+  return (await $.fs.stat(path).catch(() => null))?.isLink === true
 }
 
 /** The nearest CLAUDE.md within the project (see claudeMdDirs); `${root}/CLAUDE.md` when none is found. */
@@ -138,9 +144,13 @@ async function readProject($: EngineInterface, root: string): Promise<Project> {
   const repo = await $.session.repo().catch(() => null)
   let packageName: string | null = null
   if (await $.fs.exists(`${root}/package.json`)) {
-    const pkg: unknown = JSON.parse(await $.fs.read(`${root}/package.json`).catch(() => '{}'))
-    const name = typeof pkg === 'object' && pkg !== null ? (pkg as { name?: unknown }).name : undefined
-    packageName = typeof name === 'string' ? name : null
+    try {
+      const pkg: unknown = JSON.parse(await $.fs.read(`${root}/package.json`))
+      const name = typeof pkg === 'object' && pkg !== null ? (pkg as { name?: unknown }).name : undefined
+      packageName = typeof name === 'string' ? name.slice(0, 100) : null
+    } catch {
+      packageName = null
+    }
   }
   const facts = projectFacts({
     root,
@@ -207,6 +217,10 @@ async function writeFiles($: EngineInterface, cfg: Config, percent: number): Pro
 
     const handoffFile = pickHandoffFile(await $.fs.list(root).catch(() => []), cfg.handoffFile)
     const handoffPath = `${root}/${handoffFile}`
+    if (await isLink($, handoffPath)) {
+      $.ui.toast(`context-guard: ${handoffFile} e' un link simbolico, non lo scrivo`)
+      return `context-guard: ${handoffFile} e' un link simbolico: nessun file scritto.`
+    }
     const previous = (await $.fs.exists(handoffPath)) ? await $.fs.read(handoffPath) : null
     await $.fs.write(
       handoffPath,
@@ -223,7 +237,10 @@ async function writeFiles($: EngineInterface, cfg: Config, percent: number): Pro
     if (project !== null && grimoire !== null) {
       const v = verifyGrimoire(grimoire, project.known)
       const where = project.claudePath.replace(root, '.')
-      if (v.isOk) {
+      if (await isLink($, project.claudePath)) {
+        refused = `grimorio NON scritto: ${where} e' un link simbolico`
+        $.ui.log(`context-guard: ${refused}`)
+      } else if (v.isOk) {
         await $.fs.write(project.claudePath, spliceSection(project.claudeMd, renderSection(grimoire, date.slice(0, 10))))
         written.push(`grimorio in ${where}`)
       } else {
@@ -255,7 +272,7 @@ async function writeFiles($: EngineInterface, cfg: Config, percent: number): Pro
 export const register: Register = (on, options) => {
   const cfg: Config = {
     thresholds: thresholdsOf(options),
-    handoffFile: String(options.handoffFile || 'HANDOFF.md'),
+    handoffFile: safeFileName(options.handoffFile, 'HANDOFF.md'),
     updateClaudeMd: options.updateClaudeMd !== false,
   }
 
