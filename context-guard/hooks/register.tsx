@@ -1,34 +1,27 @@
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { GuardState, Npc, Pending } from '../types'
+import { applyApproved, checkExisting, generate } from './flow'
+import type { Deps, Outcome } from './flow'
 import {
   INITIAL_STATE,
+  SECOND_OPINION_SYSTEM,
   animate,
-  decide,
-  claudeMdDirs,
   currentGrimoire,
+  decide,
   externalLabel,
-  grimoireAction,
-  extractPrompt,
+  externalReadLabel,
   isExternalTool,
   lineDiff,
-  suspiciousReasons,
-  knownSuffixes,
-  projectFacts,
-  verifyGrimoire,
-  mergeHandoff,
-  pickHandoffFile,
-  forkPrompt,
-  renderSection,
+  parseSecondOpinion,
   safeFileName,
-  spliceSection,
-  splitReply,
+  secondOpinionPrompt,
   thresholdsOf,
 } from './logic'
-import type { Thresholds, Verdict } from './logic'
+import type { Thresholds } from './logic'
 import { OWL, SPRITE_WIDTH, spriteRaster, spriteSvg } from './sprite'
 
-type Config = { thresholds: Thresholds; handoffFile: string; updateClaudeMd: boolean }
+type Config = { thresholds: Thresholds; handoffFile: string; updateClaudeMd: boolean; aiCheck: boolean }
 
 const GUARD = { plugin: 'context-guard', key: 'guard' } as const
 const NPC = { plugin: 'context-guard', key: 'npc' } as const
@@ -44,10 +37,6 @@ const SVG = spriteSvg(OWL, SVG_SCALE)
 
 let ticker: Timer | undefined
 
-function isoDate(ms: number): string {
-  return new Date(ms).toISOString().slice(0, 16).replace('T', ' ')
-}
-
 async function getGuard($: EngineInterface): Promise<GuardState> {
   const { value } = await $.state.get(GUARD)
   return value ?? INITIAL_STATE
@@ -61,19 +50,47 @@ async function percentNow($: EngineInterface): Promise<number | undefined> {
   return (await $.session.usage()).context.percent
 }
 
-/** True when `path` is a symbolic link: the mod never writes through one, so a write cannot land outside the project. */
-async function isLink($: EngineInterface, path: string): Promise<boolean> {
-  return (await $.fs.stat(path).catch(() => null))?.isLink === true
+/** The independent check: a small model with no session, no tools and no history judges the grimoire as data. */
+async function askSecondOpinion($: EngineInterface, grimoire: string): Promise<string | null> {
+  const r = await $.model.complete({
+    model: 'haiku',
+    system: SECOND_OPINION_SYSTEM,
+    prompt: secondOpinionPrompt(grimoire),
+    maxTokens: 120,
+    effort: 'low',
+    timeoutMs: 30000,
+  })
+  if (!r.isAnswered) {
+    $.ui.log(`context-guard: controllo indipendente non disponibile (${r.reason})`, { to: 'debug' })
+    return null
+  }
+  return parseSecondOpinion(r.text)
 }
 
-/** The nearest CLAUDE.md within the project (see claudeMdDirs); `${root}/CLAUDE.md` when none is found. */
-async function findClaudeMd($: EngineInterface, root: string): Promise<string> {
-  const repoRoot = (await $.session.repo().catch(() => null))?.root ?? null
-  for (const dir of claudeMdDirs(root, repoRoot)) {
-    const candidate = `${dir}/CLAUDE.md`
-    if (await $.fs.exists(candidate)) return candidate
+/** What the write path needs from the engine, as closures over `$`. */
+function engineDeps($: EngineInterface, cfg: Config): Deps {
+  return {
+    root: () => $.session.root(),
+    repo: async () => {
+      const r = await $.session.repo()
+      return r === null ? null : { root: r.root, name: r.name }
+    },
+    sessionId: () => $.session.id(),
+    model: () => $.session.model(),
+    now: () => $.clock.now(),
+    exists: path => $.fs.exists(path),
+    read: path => $.fs.read(path),
+    write: (path, text) => $.fs.write(path, text),
+    list: path => $.fs.list(path),
+    isLink: async path => (await $.fs.stat(path).catch(() => null))?.isLink === true,
+    fork: async prompt => {
+      const r = await $.model.fork({ prompt })
+      if (r.isAnswered) return { ok: true, text: r.text }
+      return { ok: false, why: r.reason === 'api-error' ? `api-error ${r.status}` : r.reason }
+    },
+    secondOpinion: grimoire => (cfg.aiCheck ? askSecondOpinion($, grimoire) : Promise.resolve(null)),
+    external: async () => (await $.state.get(EXTERNAL)).value ?? [],
   }
-  return `${root}/CLAUDE.md`
 }
 
 function stopTicker(): void {
@@ -121,103 +138,28 @@ async function hideNpc($: EngineInterface): Promise<void> {
   await $.ui.close({ id: PANE })
 }
 
-const SKIP_DIRS = new Set(['.git', 'node_modules', '.next', '.vercel', '__pycache__', '.venv', 'venv', '.turbo', '.cache'])
-const MAX_DIRS = 800
-const MAX_DEPTH = 7
-
-/** The project's paths relative to `root`, files and folders, breadth first and bounded so a huge tree stays cheap. */
-async function projectPaths($: EngineInterface, root: string): Promise<string[]> {
-  const paths: string[] = []
-  let queue: { rel: string; depth: number }[] = [{ rel: '', depth: 0 }]
-  let visited = 0
-  while (queue.length > 0 && visited < MAX_DIRS) {
-    const next: { rel: string; depth: number }[] = []
-    for (const { rel, depth } of queue) {
-      if (visited >= MAX_DIRS) break
-      visited += 1
-      const entries = await $.fs.list(rel === '' ? root : `${root}/${rel}`).catch(() => [])
-      for (const entry of entries) {
-        const path = rel === '' ? entry.name : `${rel}/${entry.name}`
-        paths.push(path)
-        if (entry.kind === 'dir' && depth < MAX_DEPTH && !SKIP_DIRS.has(entry.name)) next.push({ rel: path, depth: depth + 1 })
-      }
-    }
-    queue = next
-  }
-  return paths
-}
-
-type Project = { root: string; claudePath: string; claudeMd: string | null; known: ReadonlySet<string>; facts: string }
-
-/** Everything the grimoire is checked against: where it goes, what is there now, and the project's own files. */
-async function readProject($: EngineInterface, root: string): Promise<Project> {
-  const claudePath = await findClaudeMd($, root)
-  const claudeMd = (await $.fs.exists(claudePath)) ? await $.fs.read(claudePath) : null
-  const paths = await projectPaths($, root)
-  const repo = await $.session.repo().catch(() => null)
-  let packageName: string | null = null
-  if (await $.fs.exists(`${root}/package.json`)) {
-    try {
-      const pkg: unknown = JSON.parse(await $.fs.read(`${root}/package.json`))
-      const name = typeof pkg === 'object' && pkg !== null ? (pkg as { name?: unknown }).name : undefined
-      packageName = typeof name === 'string' ? name.slice(0, 100) : null
-    } catch {
-      packageName = null
-    }
-  }
-  const facts = projectFacts({
-    root,
-    topLevel: paths.filter(p => !p.includes('/')),
-    packageName,
-    repoName: repo && repo.root === root ? (repo.name ?? root.replace(/^.*\//, '')) : null,
-  })
-  return { root, claudePath, claudeMd, known: knownSuffixes(paths), facts }
-}
-
-function describeMissing(v: Verdict): string {
-  const shown = v.missing.slice(0, 3).map(p => `\`${p}\``).join(', ')
-  return `${v.missing.length} percorsi su ${v.checked} non esistono qui (es. ${shown})`
-}
-
 /** At session start: says so when the grimoire this project carries names paths the project does not have. */
-async function checkExistingGrimoire($: EngineInterface): Promise<void> {
-  const project = await readProject($, await $.session.root())
-  const current = currentGrimoire(project.claudeMd)
-  if (current === null) return
-  const v = verifyGrimoire(current, project.known)
-  if (v.isOk) return
-  const where = project.claudePath.replace(project.root, '.')
-  $.ui.log(`context-guard: il grimorio in ${where} sembra di un altro progetto: ${describeMissing(v)}. /ctx-handoff lo rigenera.`)
-  $.ui.toast(`Il grimorio in ${where} sembra di un altro progetto. /ctx-handoff lo rigenera.`, { timeoutMs: 10000 })
+async function checkExistingGrimoire($: EngineInterface, cfg: Config): Promise<void> {
+  const problem = await checkExisting(engineDeps($, cfg))
+  if (problem === null) return
+  $.ui.log(`context-guard: ${problem}. /ctx-handoff lo rigenera.`)
+  $.ui.toast('Il grimorio in CLAUDE.md sembra di un altro progetto. /ctx-handoff lo rigenera.', { timeoutMs: 10000 })
 }
 
-/** Records that the session read content from outside the machine; the grimoire then waits for the person's ok. */
+/** Records that the session read content its author did not write; the grimoire then waits for the person's ok. */
 async function markExternal($: EngineInterface, label: string): Promise<void> {
   const { value } = await $.state.get(EXTERNAL)
   const list = value ?? []
   if (!list.includes(label)) await $.state.set(EXTERNAL, [...list, label].slice(-20))
 }
 
-/** What the project already says about itself: the text a grimoire's addresses are checked against. */
-async function knownText($: EngineInterface, root: string, claudeMd: string | null): Promise<string> {
-  const parts = [claudeMd ?? '']
-  for (const name of ['README.md', 'AGENTS.md', 'package.json']) {
-    const path = `${root}/${name}`
-    if (await $.fs.exists(path)) parts.push(await $.fs.read(path).catch(() => ''))
-  }
-  return parts.join('\n')
-}
-
-/** Writes the waiting grimoire into its CLAUDE.md, read afresh so edits made meanwhile are kept. */
-async function applyPending($: EngineInterface): Promise<void> {
+async function applyPending($: EngineInterface, cfg: Config): Promise<void> {
   const { value: pending } = await $.state.get(PENDING)
   if (pending === null || pending === undefined) return
-  if (await isLink($, pending.claudePath)) {
+  if ((await applyApproved(engineDeps($, cfg), pending)) === 'link') {
     $.ui.toast("context-guard: CLAUDE.md e' un link simbolico, non lo scrivo")
     return
   }
-  const fresh = (await $.fs.exists(pending.claudePath)) ? await $.fs.read(pending.claudePath) : null
-  await $.fs.write(pending.claudePath, spliceSection(fresh, renderSection(pending.text, pending.date)))
   await $.state.set(PENDING, null)
   $.ui.log(`context-guard: grimorio applicato in ${pending.claudePath} dopo la tua conferma`)
   $.ui.toast('Grimorio applicato in CLAUDE.md')
@@ -231,17 +173,16 @@ async function discardPending($: EngineInterface): Promise<void> {
   await hideNpc($)
 }
 
+function waitingLine(pending: Pending): string {
+  return `Il grimorio aspetta il tuo ok (${pending.why.join('; ')}). Controlla le modifiche e premi A per applicarle o S per scartarle.`
+}
+
 /** Reopens the dialog on the grimoire that waits, if any. */
 async function showPending($: EngineInterface): Promise<string> {
   const { value: pending } = await $.state.get(PENDING)
   if (pending === null || pending === undefined) return 'context-guard: nessun grimorio in attesa di conferma.'
   const before = (await $.fs.exists(pending.claudePath)) ? currentGrimoire(await $.fs.read(pending.claudePath)) : null
-  await showNpc(
-    $,
-    `Questo grimorio aspetta il tuo ok: nella sessione sono entrati contenuti da ${pending.sources.join(', ')}. Controlla le modifiche e premi A per applicarle o S per scartarle.`,
-    null,
-    lineDiff(before, pending.text),
-  )
+  await showNpc($, waitingLine(pending), null, lineDiff(before, pending.text))
   return 'context-guard: grimorio in attesa mostrato.'
 }
 
@@ -251,114 +192,63 @@ async function reset($: EngineInterface): Promise<void> {
   $.ui.status(undefined)
 }
 
-/** Asks the model for the handoff and the grimoire over the session's own transcript, then writes both. */
+const REFUSED_NOTE = {
+  link: " Il grimorio pero' non l'ho scritto: CLAUDE.md e' un link simbolico.",
+  missing: " Il grimorio pero' non l'ho scritto: parlava di file che qui non esistono.",
+  blocked: " Il grimorio pero' l'ho bloccato: conteneva testo sospetto, i motivi sono nella trascrizione.",
+} as const
+
+/** Tells the person what the write path did: the transcript line, the toasts and the Librarian. */
+async function report($: EngineInterface, out: Outcome, percent: number): Promise<string> {
+  if (out.kind === 'no-reply') {
+    $.ui.toast(`context-guard: handoff non scritto (${out.why})`)
+    return `context-guard: il modello non ha risposto (${out.why}).`
+  }
+  if (out.kind === 'handoff-is-link') {
+    $.ui.toast(`context-guard: ${out.handoffFile} e' un link simbolico, non lo scrivo`)
+    return `context-guard: ${out.handoffFile} e' un link simbolico: nessun file scritto.`
+  }
+
+  const g = out.grimoire
+  let note = ''
+  let review: Npc['review'] = null
+  let tail = ''
+  if (g.kind === 'written') {
+    tail = ` e grimorio in ${g.where}`
+  } else if (g.kind === 'refused') {
+    note = REFUSED_NOTE[g.reason]
+    tail = `; grimorio ${g.reason === 'blocked' ? 'BLOCCATO' : 'NON scritto'} in ${g.where}: ${g.detail}`
+    $.ui.toast(`context-guard: grimorio ${g.reason === 'blocked' ? 'bloccato' : 'non scritto'}: ${g.detail}`, { timeoutMs: 12000 })
+  } else if (g.kind === 'review') {
+    await $.state.set(PENDING, g.pending)
+    review = g.diff
+    note = ` ${waitingLine(g.pending)}`
+    tail = `; grimorio in attesa di conferma (${g.pending.why.join('; ')}), /ctx-grimorio lo mostra`
+  }
+
+  const line = `context-guard: scritto ${out.handoffFile}${tail} al ${percent}% di contesto`
+  $.ui.log(line)
+  await showNpc(
+    $,
+    `Ehi! Il contesto e' al ${percent}%. Ho scritto ${out.handoffFile}${
+      g.kind === 'written' ? ' e aggiornato il grimorio in CLAUDE.md' : ''
+    }.${note} Quando sei pronto, apri una nuova chat e incolla il prompt${out.promptText ? ': premi C per copiarlo' : ' che trovi in fondo al file'}.`,
+    out.promptText,
+    review,
+  )
+  return line
+}
+
+/** Runs the write path once: never twice at the same time, always leaving the status line as it found it. */
 async function writeFiles($: EngineInterface, cfg: Config, percent: number): Promise<string> {
   const state = await getGuard($)
   if (state.isWriting) return "context-guard: una scrittura e' gia' in corso."
   await setGuard($, s => ({ ...s, isWriting: true }))
   $.ui.status(`ctx ${percent}% | scrivo ${cfg.handoffFile}...`)
-
   try {
-    const root = await $.session.root()
-    const project = cfg.updateClaudeMd ? await readProject($, root) : null
-    const current = project ? currentGrimoire(project.claudeMd) : null
-    const validCurrent = project && current !== null && verifyGrimoire(current, project.known).isOk ? current : null
-    const reply = await $.model.fork({
-      prompt: forkPrompt({
-        withGrimoire: cfg.updateClaudeMd,
-        handoffFile: cfg.handoffFile,
-        root,
-        facts: project?.facts ?? `- Cartella: ${root}`,
-        current: validCurrent,
-      }),
-    })
-    if (!reply.isAnswered) {
-      const why = reply.reason === 'api-error' ? `api-error ${reply.status}` : reply.reason
-      $.ui.toast(`context-guard: handoff non scritto (${why})`)
-      return `context-guard: il modello non ha risposto (${why}).`
-    }
-
-    const { handoff, grimoire } = splitReply(reply.text)
-    const date = isoDate(await $.clock.now())
-    const written: string[] = []
-
-    const handoffFile = pickHandoffFile(await $.fs.list(root).catch(() => []), cfg.handoffFile)
-    const handoffPath = `${root}/${handoffFile}`
-    if (await isLink($, handoffPath)) {
-      $.ui.toast(`context-guard: ${handoffFile} e' un link simbolico, non lo scrivo`)
-      return `context-guard: ${handoffFile} e' un link simbolico: nessun file scritto.`
-    }
-    const previous = (await $.fs.exists(handoffPath)) ? await $.fs.read(handoffPath) : null
-    await $.fs.write(
-      handoffPath,
-      mergeHandoff(previous, handoff, {
-        date,
-        percent,
-        sessionId: await $.session.id(),
-        model: await $.session.model(),
-      }),
-    )
-    written.push(handoffFile)
-
-    let refused: string | null = null
-    let refusedNote = ''
-    let review: Npc['review'] = null
-    let reviewSources: string[] = []
-    if (project !== null && grimoire !== null) {
-      const v = verifyGrimoire(grimoire, project.known)
-      const where = project.claudePath.replace(root, '.')
-      const reasons = v.isOk ? suspiciousReasons(grimoire, await knownText($, root, project.claudeMd)) : []
-      const external = (await $.state.get(EXTERNAL)).value ?? []
-      const action = grimoireAction({
-        isLink: await isLink($, project.claudePath),
-        matchesProject: v.isOk,
-        suspicious: reasons,
-        external,
-      })
-      if (action === 'link') {
-        refused = `grimorio NON scritto: ${where} e' un link simbolico`
-        refusedNote = " Il grimorio pero' non l'ho scritto: CLAUDE.md e' un link simbolico."
-        $.ui.log(`context-guard: ${refused}`)
-      } else if (action === 'missing') {
-        refused = `grimorio NON scritto in ${where}: ${describeMissing(v)}`
-        refusedNote = " Il grimorio pero' non l'ho scritto: parlava di file che qui non esistono."
-        $.ui.log(`context-guard: ${refused}. Percorsi mancanti: ${v.missing.join(', ')}`)
-        $.ui.toast(`context-guard: ${refused}`, { timeoutMs: 10000 })
-      } else if (action === 'blocked') {
-        refused = `grimorio BLOCCATO in ${where}: ${reasons.join('; ')}`
-        refusedNote = " Il grimorio pero' l'ho bloccato: conteneva testo sospetto, i motivi sono nella trascrizione."
-        $.ui.log(`context-guard: ${refused}`)
-        $.ui.toast(`context-guard: ${refused}`, { timeoutMs: 12000 })
-      } else if (action === 'review') {
-        const pending: Pending = { claudePath: project.claudePath, text: grimoire, date: date.slice(0, 10), sources: external }
-        await $.state.set(PENDING, pending)
-        review = lineDiff(currentGrimoire(project.claudeMd), grimoire)
-        reviewSources = external
-        $.ui.log(`context-guard: grimorio in attesa di conferma (sessione con contenuti da ${external.join(', ')}). /ctx-grimorio lo mostra.`)
-      } else {
-        await $.fs.write(project.claudePath, spliceSection(project.claudeMd, renderSection(grimoire, date.slice(0, 10))))
-        written.push(`grimorio in ${where}`)
-      }
-    }
-
-    await setGuard($, s => ({ ...s, lastWrittenAt: percent }))
-    const line = `context-guard: scritti ${written.join(' e ')} al ${percent}% di contesto${refused ? `; ${refused}` : ''}`
-    $.ui.log(line)
-
-    const promptText = extractPrompt(handoff)
-    await showNpc(
-      $,
-      `Ehi! Il contesto e' al ${percent}%. Ho scritto ${handoffFile}${
-        written.length > 1 ? ' e aggiornato il grimorio in CLAUDE.md' : ''
-      }.${refusedNote}${
-        review !== null
-          ? ` Il grimorio aspetta il tuo ok: in questa sessione sono entrati contenuti da ${reviewSources.join(', ')}. Controlla le modifiche qui sotto e premi A per applicarle o S per scartarle.`
-          : ''
-      } Quando sei pronto, apri una nuova chat e incolla il prompt${promptText ? ': premi C per copiarlo' : ' che trovi in fondo al file'}.`,
-      promptText,
-      review,
-    )
-    return line
+    const out = await generate(engineDeps($, cfg), cfg, percent)
+    if (out.kind === 'done') await setGuard($, s => ({ ...s, lastWrittenAt: percent }))
+    return await report($, out, percent)
   } finally {
     await setGuard($, s => ({ ...s, isWriting: false }))
     $.ui.status(`ctx ${percent}%`)
@@ -370,6 +260,7 @@ export const register: Register = (on, options) => {
     thresholds: thresholdsOf(options),
     handoffFile: safeFileName(options.handoffFile, 'HANDOFF.md'),
     updateClaudeMd: options.updateClaudeMd !== false,
+    aiCheck: options.aiCheck !== false,
   }
 
   on('session.start', async ($, e, next) => {
@@ -384,7 +275,7 @@ export const register: Register = (on, options) => {
     if (cfg.updateClaudeMd) {
       // Its own dispatch, so the walk of the project never delays the session's first prompt.
       $.clock.after(1500, () => {
-        void checkExistingGrimoire($).catch(err => $.ui.log(`context-guard: ${String(err)}`, { to: 'debug' }))
+        void checkExistingGrimoire($, cfg).catch(err => $.ui.log(`context-guard: ${String(err)}`, { to: 'debug' }))
       })
     }
     return next(e)
@@ -400,7 +291,20 @@ export const register: Register = (on, options) => {
 
   on('tool.call', async ($, e, next) => {
     const command = 'command' in e && typeof e.command === 'string' ? e.command : undefined
-    if (isExternalTool(e.tool, command)) await markExternal($, externalLabel(e.tool))
+    if (isExternalTool(e.tool, command)) {
+      await markExternal($, externalLabel(e.tool))
+    } else {
+      const path =
+        'file_path' in e && typeof e.file_path === 'string'
+          ? e.file_path
+          : 'notebook_path' in e && typeof e.notebook_path === 'string'
+            ? e.notebook_path
+            : 'path' in e && typeof e.path === 'string'
+              ? e.path
+              : undefined
+      const label = path === undefined ? null : externalReadLabel(e.tool, path, await $.session.root())
+      if (label !== null) await markExternal($, label)
+    }
     return next(e)
   })
 
@@ -504,7 +408,7 @@ export const register: Register = (on, options) => {
         )}
         <Box flexDirection="row" gap={1} marginLeft={spriteWidth + 1} marginTop={1}>
           {a.isDone && npc.review !== null && (
-            <Button key="apply" label="Applica" hotkey="a" variant="primary" onPress={() => applyPending($)} />
+            <Button key="apply" label="Applica" hotkey="a" variant="primary" onPress={() => applyPending($, cfg)} />
           )}
           {a.isDone && npc.review !== null && (
             <Button key="discard" label="Scarta" hotkey="s" onPress={() => discardPending($)} />

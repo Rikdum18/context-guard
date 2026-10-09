@@ -62,12 +62,13 @@ La mod scrive file nei tuoi progetti, quindi è costruita per non rompere niente
 
 ### Protezione dalle istruzioni iniettate
 
-Il grimorio finisce in `CLAUDE.md`, e le sessioni future lo leggono come istruzioni. Se nella sessione è entrato testo scritto da altri, per esempio una pagina web con istruzioni nascoste, quel testo non deve poter diventare una regola del progetto. Due controlli lo impediscono senza affidarsi al modello:
+Il grimorio finisce in `CLAUDE.md`, e le sessioni future lo leggono come istruzioni. Se nella sessione è entrato testo scritto da altri, per esempio una pagina web con istruzioni nascoste, quel testo non deve poter diventare una regola del progetto. Tre livelli indipendenti lo impediscono, e i primi due non si affidano a nessun modello:
 
-- **Fonti esterne, approvazione obbligatoria.** La mod registra ogni strumento usato nella sessione. Se la sessione ha letto contenuti da fuori, il grimorio non viene scritto ma resta in attesa: il Bibliotecario mostra le righe aggiunte e tolte, e tu premi `A` per applicarle o `S` per scartarle. Contano come fonti esterne ricerche e pagine web, browser e tutti i connettori MCP come mail, documenti e chat, e i comandi shell che scaricano, come `curl`, `wget`, `gh api` e `git pull`. Se chiudi il dialogo, `/ctx-grimorio` lo riapre.
+- **Fonti esterne, approvazione obbligatoria.** La mod registra ogni strumento usato nella sessione. Se la sessione ha letto contenuti da fuori, il grimorio non viene scritto ma resta in attesa: il Bibliotecario mostra le righe aggiunte e tolte, e tu premi `A` per applicarle o `S` per scartarle. Contano come fonti esterne ricerche e pagine web, browser e tutti i connettori MCP come mail, documenti e chat, i comandi shell che scaricano, come `curl`, `wget`, `gh api` e `git pull`, e la lettura di file fuori dal progetto o dentro cartelle di codice di terzi come `node_modules`, `vendor` e `Downloads`. Se chiudi il dialogo, `/ctx-grimorio` lo riapre.
 - **Filtri sul testo, blocco.** Il grimorio viene scartato se chiede di ignorare istruzioni precedenti, di scaricare ed eseguire codice, di inviare token o password, o di disattivare protezioni e permessi. Lo stesso vale se contiene blocchi codificati, caratteri invisibili, HTML attivo, o indirizzi web ed email che il progetto non cita già in CLAUDE.md, README.md, AGENTS.md o package.json. Le regole che vietano qualcosa, come "non condividere mai il token", non vengono bloccate.
+- **Controllo indipendente, approvazione.** Ogni grimorio che ha superato i filtri viene giudicato da un modello piccolo e separato, Haiku, che non vede la sessione, non ha strumenti e riceve il testo come dati da giudicare. Se lo trova sospetto, per esempio perché chiede di copiare file verso terzi o di saltare le conferme, il grimorio va in approvazione con il motivo. Coglie le iniezioni scritte in modo da superare i filtri. Si disattiva con l'opzione `aiCheck`.
 
-Il residuo è testo malevolo già presente in un file locale del progetto e scritto in modo da superare i filtri. Per quel caso resta utile guardare la sezione quando cambia, per esempio con `git diff CLAUDE.md`.
+Il residuo è un testo che supera insieme i filtri e il giudizio del modello indipendente, arrivato da un file del progetto stesso. Per quel caso resta utile guardare la sezione quando cambia, per esempio con `git diff CLAUDE.md`.
 
 ## Installazione
 
@@ -98,15 +99,18 @@ Da `/plugin configure context-guard@riccardo-mods` in una sessione, oppure in `s
 | `repeatEvery` | 10 | Riscrive ogni N punti oltre `writeAt`, 0 per scrivere una volta sola |
 | `handoffFile` | `HANDOFF.md` | Nome del file di handoff |
 | `updateClaudeMd` | true | Aggiorna il grimorio in CLAUDE.md |
+| `aiCheck` | true | Fa giudicare ogni nuovo grimorio dal controllo indipendente |
 
 ## Come funziona
 
 È un plugin di *function hooks*: un modulo TypeScript che il motore di Claude Code carica ed esegue in un ambiente isolato, senza DOM e senza Node. Tutto passa dall'interfaccia `$` del motore.
 
-- **`tool.call`:** registra se la sessione usa strumenti che portano dentro contenuti esterni.
+- **`tool.call`:** registra se la sessione usa strumenti che portano dentro contenuti esterni o legge file fuori dal progetto.
 - **`turn.complete`:** a fine turno legge il riempimento del contesto con `$.session.usage()` e decide se avvisare o scrivere.
 - **`$.model.fork`:** fa al modello una domanda sulla trascrizione della sessione stessa, così la richiesta riusa la cache dei prompt invece di rimandare tutto da capo.
 - **`$.fs`:** scrive i file e visita la cartella per il controllo sul progetto.
+- **`$.model.complete`:** chiede a Haiku il giudizio indipendente sul grimorio, senza sessione né strumenti.
+- **`flow.ts`:** tutto il percorso di scrittura, dalla richiesta al modello fino ai file, riceve file, modello e stato dall'esterno. Gli hook gli passano il motore, i test un progetto finto in memoria.
 - **`ui.render` sul componente `Pane`:** disegna il dialogo del Bibliotecario. Un timer da 50 ms fa avanzare l'animazione tramite `$.state`, che sopravvive anche al ricaricamento del modulo.
 - **`session.compact` e `session.end`:** azzerano le soglie dopo una compattazione o un `/clear`.
 
@@ -116,9 +120,10 @@ context-guard/
 ├── hooks/
 │   ├── hooks.json               punta a register.tsx
 │   ├── register.tsx             gli hook e il dialogo
-│   ├── logic.ts                 logica pura: soglie, prompt, merge dei file, controllo sul progetto
+│   ├── flow.ts                  percorso di scrittura, testabile senza il motore
+│   ├── logic.ts                 logica pura: soglie, prompt, merge dei file, controlli
 │   ├── sprite.ts                il gufo e i suoi renderer SVG e Raster
-│   └── *.test.ts                50 test
+│   └── *.test.ts                63 test, compreso il flusso completo
 └── types/index.d.ts             contratto dello stato in $.state
 ```
 
@@ -143,7 +148,7 @@ claude --plugin-dir ./context-guard
 ## Limiti noti
 
 - Il riempimento viene letto a fine turno: un turno lunghissimo che passa dal 40% al 75% riceve avviso e scrittura insieme.
-- Ogni scrittura costa una lettura in cache della trascrizione più qualche migliaio di token generati.
+- Ogni scrittura costa una lettura in cache della trascrizione più qualche migliaio di token generati, e una chiamata breve a Haiku per il controllo indipendente.
 - Un aggiornamento della mod vale solo per le sessioni avviate dopo: quelle già aperte continuano con la versione vecchia.
 - Il controllo sul progetto si basa sui percorsi citati: un grimorio che ne cita meno di 3 non viene giudicato.
 - L'API dei function hooks è in accesso anticipato e può cambiare tra le versioni di Claude Code.

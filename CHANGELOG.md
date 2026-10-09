@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.0
+- Controllo indipendente: ogni grimorio che supera i filtri viene giudicato da Haiku senza sessione né strumenti. Se lo trova sospetto, il grimorio va in approvazione con il motivo. Opzione `aiCheck`.
+- Contano come contenuti esterni anche i file letti fuori dal progetto o in cartelle di terzi come `node_modules`, `vendor` e `Downloads`.
+- Il percorso di scrittura è in `flow.ts`, separato dal motore, con test end-to-end su un progetto in memoria.
+
 ## 0.5.0
 - Grimorio in attesa di conferma quando la sessione ha letto contenuti esterni: web, browser, connettori MCP, comandi shell che scaricano. Il Bibliotecario mostra le modifiche con i tasti Applica e Scarta.
 - Nuovo comando `/ctx-grimorio` per riaprire il grimorio in attesa.

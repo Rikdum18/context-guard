@@ -24,8 +24,8 @@ export type Pending = {
   claudePath: string
   text: string
   date: string
-  /** The external sources the session read, as labels. */
-  sources: string[]
+  /** Why it waits: the outside sources the session read, and the independent check's reason when it had one. */
+  why: string[]
 }
 
 declare module 'claude-code' {
