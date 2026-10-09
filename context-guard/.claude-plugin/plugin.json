@@ -1,6 +1,6 @@
 {
   "name": "context-guard",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Avvisa quando il contesto supera una soglia e, oltre una seconda soglia, scrive HANDOFF.md e aggiorna il grimorio in CLAUDE.md.",
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -49,6 +49,12 @@
         "solo-se-serve"
       ],
       "default": "sempre"
+    },
+    "pulsanteBibliotecario": {
+      "type": "boolean",
+      "title": "Pulsante del Bibliotecario",
+      "description": "Mostra il pulsante per parlare con il Bibliotecario sopra il prompt",
+      "default": true
     }
   },
   "author": {

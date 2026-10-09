@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.0
+- Pulsante "🦉 Bibliotecario" sopra il prompt e comando `/bibliotecario [domanda]`: una chat in cui il Bibliotecario risponde conoscendo la sessione, il grimorio e l'handoff.
+- Azioni rapide nella chat: "Come siamo messi?", "Scrivi handoff", "Grimorio in attesa".
+- Avvisi accanto al pulsante: grimorio in attesa e passaggio di chat in vista. Opzione `pulsanteBibliotecario`.
+
 ## 0.7.0
 - Per impostazione predefinita ogni modifica al grimorio aspetta la tua conferma: nessun testo generato entra in CLAUDE.md senza il tuo ok. Opzione `confermaGrimorio` (`sempre` o `solo-se-serve`).
 - Un grimorio identico a quello attuale non chiede conferma e non viene riscritto, e non spende il controllo indipendente.

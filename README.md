@@ -23,6 +23,7 @@ Nelle sessioni lunghe il contesto si riempie: le risposte peggiorano, la compatt
 | 70%, 80%, 90% | Riscrive gli stessi file, così restano aggiornati. |
 | `/ctx-handoff` | Fa tutto subito, a qualsiasi percentuale. |
 | `/ctx-grimorio` | Riapre il grimorio in attesa di conferma, da applicare o scartare. |
+| `/bibliotecario` | Apre la chat con il Bibliotecario. Con una domanda dopo il comando risponde subito. |
 
 Dopo un `/compact` o un `/clear` le soglie ripartono da zero.
 
@@ -46,6 +47,18 @@ Quando i file sono scritti, un gufo in pixel art 20x20 scivola dentro da sinistr
 - `C` copia il prompt per la nuova chat negli appunti.
 - `A` e `S` applicano o scartano il grimorio, quando è in attesa di conferma.
 - `O` o Esc chiude il dialogo.
+
+### Parlare con il Bibliotecario
+
+Sopra il prompt c'è sempre il pulsante **🦉 Bibliotecario**. In alternativa scrivi `/bibliotecario`, oppure `/bibliotecario <domanda>` per chiedere subito. Si apre una chat in cui puoi chiedergli cosa è stato fatto nella sessione, cosa manca, quanto è pieno il contesto o quando conviene cambiare chat. Risponde conoscendo la conversazione, il grimorio e l'handoff del progetto. Accanto al pulsante compaiono due avvisi, quando servono: "grimorio in attesa" e "passaggio di chat in vista".
+
+Nella chat ci sono tre azioni rapide:
+
+- **Come siamo messi?** riassume contesto, ultimo handoff, grimorio in attesa e contenuti esterni, senza chiamare nessun modello.
+- **Scrivi handoff** fa subito quello che farebbe al 60%.
+- **Grimorio in attesa** riapre la conferma del grimorio.
+
+Il Bibliotecario risponde e basta: non modifica file e non esegue azioni. Quelle restano ai pulsanti. L'app desktop non permette ai plugin di aggiungere pulsanti nella barra in alto, per questo il pulsante sta sopra il prompt.
 
 ## Le regole di sicurezza
 
@@ -104,6 +117,7 @@ Da `/plugin configure context-guard@riccardo-mods` in una sessione, oppure in `s
 | `handoffFile` | `HANDOFF.md` | Nome del file di handoff |
 | `updateClaudeMd` | true | Aggiorna il grimorio in CLAUDE.md |
 | `aiCheck` | true | Fa giudicare ogni nuovo grimorio dal controllo indipendente |
+| `pulsanteBibliotecario` | true | Mostra il pulsante del Bibliotecario sopra il prompt |
 | `confermaGrimorio` | `sempre` | `sempre`: ogni modifica al grimorio aspetta il tuo ok. `solo-se-serve`: solo dopo contenuti esterni o un giudizio sospetto |
 
 ## Come funziona
@@ -116,7 +130,8 @@ Da `/plugin configure context-guard@riccardo-mods` in una sessione, oppure in `s
 - **`$.fs`:** scrive i file e visita la cartella per il controllo sul progetto.
 - **`$.model.complete`:** chiede a Haiku il giudizio indipendente sul grimorio, senza sessione né strumenti.
 - **`flow.ts`:** tutto il percorso di scrittura, dalla richiesta al modello fino ai file, riceve file, modello e stato dall'esterno. Gli hook gli passano il motore, i test un progetto finto in memoria.
-- **`ui.render` sul componente `Pane`:** disegna il dialogo del Bibliotecario. Un timer da 50 ms fa avanzare l'animazione tramite `$.state`, che sopravvive anche al ricaricamento del modulo.
+- **`ui.render` sul componente `AbovePrompt`:** disegna il pulsante del Bibliotecario sopra il prompt.
+- **`ui.render` sul componente `Pane`:** disegna il dialogo e la chat del Bibliotecario. Un timer da 50 ms fa avanzare l'animazione tramite `$.state`, che sopravvive anche al ricaricamento del modulo.
 - **`session.compact` e `session.end`:** azzerano le soglie dopo una compattazione o un `/clear`.
 
 ```
@@ -128,7 +143,7 @@ context-guard/
 │   ├── flow.ts                  percorso di scrittura, testabile senza il motore
 │   ├── logic.ts                 logica pura: soglie, prompt, merge dei file, controlli
 │   ├── sprite.ts                il gufo e i suoi renderer SVG e Raster
-│   └── *.test.ts                67 test, compreso il flusso completo
+│   └── *.test.ts                71 test, compreso il flusso completo
 └── types/index.d.ts             contratto dello stato in $.state
 ```
 

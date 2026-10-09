@@ -1,19 +1,23 @@
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { GuardState, Npc, Pending } from '../types'
-import { applyApproved, checkExisting, generate } from './flow'
+import type { Chat, GuardState, Npc, Pending } from '../types'
+import { applyApproved, checkExisting, findClaudeMd, generate } from './flow'
 import type { Deps, Outcome } from './flow'
 import {
   INITIAL_STATE,
   SECOND_OPINION_SYSTEM,
+  appendLine,
   animate,
   currentGrimoire,
   decide,
   externalLabel,
   externalReadLabel,
   isExternalTool,
+  librarianPrompt,
+  librarianStatus,
   lineDiff,
   parseSecondOpinion,
+  pickHandoffFile,
   safeFileName,
   secondOpinionPrompt,
   thresholdsOf,
@@ -21,13 +25,24 @@ import {
 import type { Thresholds } from './logic'
 import { OWL, SPRITE_WIDTH, spriteRaster, spriteSvg } from './sprite'
 
-type Config = { thresholds: Thresholds; handoffFile: string; updateClaudeMd: boolean; aiCheck: boolean; alwaysConfirm: boolean }
+type Config = {
+  thresholds: Thresholds
+  handoffFile: string
+  updateClaudeMd: boolean
+  aiCheck: boolean
+  alwaysConfirm: boolean
+  showButton: boolean
+}
 
 const GUARD = { plugin: 'context-guard', key: 'guard' } as const
 const NPC = { plugin: 'context-guard', key: 'npc' } as const
 const EXTERNAL = { plugin: 'context-guard', key: 'external' } as const
 const PENDING = { plugin: 'context-guard', key: 'pending' } as const
+const CHAT = { plugin: 'context-guard', key: 'chat' } as const
 const PANE = 'context-guard-npc'
+const CHAT_PANE = 'context-guard-chat'
+const CHAT_SHOWN = 8
+const EMPTY_CHAT: Chat = { lines: [], isThinking: false }
 const MAX_REVIEW_LINES = 14
 const TICK_MS = 50
 const MAX_FRAMES = 400
@@ -258,6 +273,96 @@ async function writeFiles($: EngineInterface, cfg: Config, percent: number): Pro
   }
 }
 
+async function getChat($: EngineInterface): Promise<Chat> {
+  return (await $.state.get(CHAT)).value ?? EMPTY_CHAT
+}
+
+async function say($: EngineInterface, who: 'tu' | 'bibliotecario', text: string): Promise<void> {
+  const chat = await getChat($)
+  await $.state.set(CHAT, { ...chat, lines: appendLine(chat.lines, { who, text }) })
+}
+
+async function openChat($: EngineInterface): Promise<void> {
+  const chat = await getChat($)
+  if (chat.lines.length === 0) {
+    await say($, 'bibliotecario', "Ciao! Sono il Bibliotecario. Chiedimi cosa abbiamo fatto, cosa manca o quando conviene cambiare chat.")
+  }
+  await $.ui.open({ id: CHAT_PANE, title: 'Bibliotecario', focus: true, closeOnEscape: true, rows: 22 })
+}
+
+/** Asks the Librarian, over the session's own transcript, with the grimoire and the handoff at hand. */
+async function askLibrarian($: EngineInterface, cfg: Config, question: string): Promise<void> {
+  const q = question.trim()
+  if (q === '') return
+  const before = await getChat($)
+  if (before.isThinking) {
+    $.ui.toast('Il Bibliotecario sta ancora rispondendo')
+    return
+  }
+  await $.state.set(CHAT, { lines: appendLine(before.lines, { who: 'tu', text: q }), isThinking: true })
+  try {
+    const root = await $.session.root()
+    const deps = engineDeps($, cfg)
+    const claudePath = await findClaudeMd(deps, root)
+    const grimoire = (await $.fs.exists(claudePath)) ? currentGrimoire(await $.fs.read(claudePath)) : null
+    const handoffName = pickHandoffFile(await $.fs.list(root).catch(() => []), cfg.handoffFile)
+    const handoffPath = `${root}/${handoffName}`
+    const handoff = (await $.fs.exists(handoffPath)) ? await $.fs.read(handoffPath).catch(() => null) : null
+    const prompt = librarianPrompt({
+      question: q,
+      percent: await percentNow($).catch(() => undefined),
+      thresholds: cfg.thresholds,
+      grimoire,
+      handoff,
+      pending: ((await $.state.get(PENDING)).value ?? null) !== null,
+      external: (await $.state.get(EXTERNAL)).value ?? [],
+    })
+    const forked = await $.model.fork({ prompt })
+    let answer: string
+    if (forked.isAnswered) {
+      answer = forked.text.trim()
+    } else if (forked.reason === 'nothing-to-fork') {
+      // A brand-new chat has no transcript yet: ask without it.
+      const r = await $.model.complete({ model: await $.session.model(), prompt, maxTokens: 800 })
+      answer = r.isAnswered ? r.text.trim() : `Non riesco a rispondere adesso (${r.reason}).`
+    } else {
+      answer = `Non riesco a rispondere adesso (${forked.reason === 'api-error' ? `api-error ${forked.status}` : forked.reason}).`
+    }
+    await say($, 'bibliotecario', answer)
+  } finally {
+    const chat = await getChat($)
+    await $.state.set(CHAT, { ...chat, isThinking: false })
+  }
+}
+
+async function librarianWriteHandoff($: EngineInterface, cfg: Config): Promise<void> {
+  await say($, 'tu', 'Scrivi l\'handoff adesso.')
+  const percent = (await percentNow($).catch(() => undefined)) ?? 0
+  const line = await writeFiles($, cfg, percent)
+  await say($, 'bibliotecario', line.replace(/^context-guard: /, 'Fatto: '))
+}
+
+async function librarianStatusNow($: EngineInterface, cfg: Config): Promise<void> {
+  await say($, 'tu', 'Come siamo messi?')
+  const guard = await getGuard($)
+  await say(
+    $,
+    'bibliotecario',
+    librarianStatus({
+      percent: await percentNow($).catch(() => undefined),
+      thresholds: cfg.thresholds,
+      lastWrittenAt: guard.lastWrittenAt,
+      pending: ((await $.state.get(PENDING)).value ?? null) !== null,
+      external: (await $.state.get(EXTERNAL)).value ?? [],
+    }),
+  )
+}
+
+async function librarianPending($: EngineInterface): Promise<void> {
+  const text = await showPending($)
+  if (text.includes('nessun grimorio')) await say($, 'bibliotecario', 'Non ci sono grimori in attesa di conferma.')
+}
+
 export const register: Register = (on, options) => {
   const cfg: Config = {
     thresholds: thresholdsOf(options),
@@ -265,12 +370,18 @@ export const register: Register = (on, options) => {
     updateClaudeMd: options.updateClaudeMd !== false,
     aiCheck: options.aiCheck !== false,
     alwaysConfirm: options.confermaGrimorio !== 'solo-se-serve',
+    showButton: options.pulsanteBibliotecario !== false,
   }
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'ctx-handoff',
       description: `Scrive subito ${cfg.handoffFile} e il grimorio in CLAUDE.md`,
+    })
+    await $.command.register({
+      name: 'bibliotecario',
+      description: 'Parla con il Bibliotecario: cosa abbiamo fatto, cosa manca, quando cambiare chat',
+      argumentHint: '[domanda]',
     })
     await $.command.register({
       name: 'ctx-grimorio',
@@ -289,6 +400,85 @@ export const register: Register = (on, options) => {
     const percent = (await percentNow($).catch(() => undefined)) ?? 0
     const text = await writeFiles($, cfg, percent)
     return { text }
+  })
+
+  on('command.run', { command: 'bibliotecario' }, async ($, e) => {
+    await openChat($)
+    if (e.args.trim() !== '') await askLibrarian($, cfg, e.args)
+    return { text: 'Il Bibliotecario ti ascolta.' }
+  })
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (!cfg.showButton || e.props.hasSurvey) return next(e)
+    const { Box, Button, Text } = $.ui.resolve(e)
+    const guard = await getGuard($)
+    const hasPending = ((await $.state.get(PENDING)).value ?? null) !== null
+    const below = await next(e)
+    return (
+      <Box flexDirection="column">
+        {below}
+        <Box flexDirection="row" justifyContent="flex-end" gap={1}>
+          {hasPending && <Text color="yellow">grimorio in attesa</Text>}
+          {guard.warned && <Text dimColor>passaggio di chat in vista</Text>}
+          <Button key="librarian" label="🦉 Bibliotecario" hotkey="b" onPress={() => openChat($)} />
+        </Box>
+      </Box>
+    )
+  })
+
+  on('ui.render', { component: 'Pane', requestId: CHAT_PANE }, async ($, e) => {
+    const { Box, Button, Text } = $.ui.resolve(e)
+    const chat = await getChat($)
+    const lines = chat.lines.slice(-CHAT_SHOWN)
+    const answer = (text: string, key: string) => {
+      if (e.surface === 'mobile') return <Text wrap="wrap">{text}</Text>
+      const { Markdown } = $.ui.resolve(e)
+      return <Markdown key={key} text={text} />
+    }
+    const input =
+      e.surface === 'mobile' ? (
+        <Text dimColor>Scrivi /bibliotecario seguito dalla domanda.</Text>
+      ) : (
+        (() => {
+          const { Input } = $.ui.resolve(e)
+          return (
+            <Input
+              key="ask"
+              placeholder="Chiedi al Bibliotecario..."
+              submitLabel="Chiedi"
+              autoFocus
+              onSubmit={value => askLibrarian($, cfg, value)}
+            />
+          )
+        })()
+      )
+    return (
+      <Box flexDirection="column" paddingX={1}>
+        <Box flexDirection="column" borderStyle="double" paddingX={1}>
+          <Text bold>🦉 Bibliotecario</Text>
+          {chat.lines.length > CHAT_SHOWN && <Text dimColor>... {chat.lines.length - CHAT_SHOWN} messaggi precedenti</Text>}
+          {lines.map((l, i) =>
+            l.who === 'tu' ? (
+              <Text color="cyan" wrap="wrap">
+                Tu: {l.text}
+              </Text>
+            ) : (
+              <Box flexDirection="column" marginBottom={1}>
+                {answer(l.text, `answer-${chat.lines.length - lines.length + i}`)}
+              </Box>
+            ),
+          )}
+          {chat.isThinking && <Text dimColor italic>Il Bibliotecario sfoglia i suoi volumi...</Text>}
+        </Box>
+        <Box marginTop={1}>{input}</Box>
+        <Box flexDirection="row" gap={1} marginTop={1}>
+          <Button key="status" label="Come siamo messi?" onPress={() => librarianStatusNow($, cfg)} />
+          <Button key="handoff" label="Scrivi handoff" onPress={() => librarianWriteHandoff($, cfg)} />
+          <Button key="pending" label="Grimorio in attesa" onPress={() => librarianPending($)} />
+          <Button key="close" label="Chiudi" role="dismiss" onPress={() => $.ui.close({ id: CHAT_PANE })} />
+        </Box>
+      </Box>
+    )
   })
 
   on('command.run', { command: 'ctx-grimorio' }, async $ => ({ text: await showPending($) }))
@@ -350,6 +540,7 @@ export const register: Register = (on, options) => {
       await reset($)
       await $.state.set(EXTERNAL, [])
       await $.state.set(PENDING, null)
+      await $.state.set(CHAT, EMPTY_CHAT)
     }
     return next(e)
   })

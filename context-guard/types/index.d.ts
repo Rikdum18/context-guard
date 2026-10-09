@@ -28,8 +28,14 @@ export type Pending = {
   why: string[]
 }
 
+/** One line of the chat with the Librarian. */
+export type ChatLine = { who: 'tu' | 'bibliotecario'; text: string }
+
+/** The chat with the Librarian: its lines, and whether an answer is on its way. */
+export type Chat = { lines: ChatLine[]; isThinking: boolean }
+
 declare module 'claude-code' {
   interface PluginState {
-    'context-guard': { guard: GuardState; npc: Npc | null; external: string[]; pending: Pending | null }
+    'context-guard': { guard: GuardState; npc: Npc | null; external: string[]; pending: Pending | null; chat: Chat }
   }
 }
