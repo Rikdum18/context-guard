@@ -298,7 +298,12 @@ export function currentGrimoire(claudeMd: string | null): string | null {
   const s = claudeMd.indexOf(SECTION_START)
   const e = claudeMd.indexOf(SECTION_END, s === -1 ? 0 : s)
   if (s === -1 || e === -1 || e < s) return null
-  return claudeMd.slice(s + SECTION_START.length, e).trim()
+  // The heading with the date is the mod's own, not the grimoire's: comparing it would make every write a change.
+  return claudeMd
+    .slice(s + SECTION_START.length, e)
+    .trim()
+    .replace(/^## Grimorio del progetto \(aggiornato da context-guard[^\n]*\n*/, '')
+    .trim()
 }
 
 /** What the fork is told about the project: where it is and what it holds, so it cannot mistake it for another. */
@@ -432,12 +437,13 @@ export function lineDiff(before: string | null, after: string): { added: string[
   return { added: neu.filter(l => !oldSet.has(l)), removed: old.filter(l => !newSet.has(l)) }
 }
 
-export type GrimoireAction = 'link' | 'missing' | 'blocked' | 'review' | 'write'
+export type GrimoireAction = 'link' | 'missing' | 'blocked' | 'unchanged' | 'review' | 'write'
 
 /**
  * What happens to a freshly generated grimoire, in order of precedence: never through a symbolic link, never when it
- * describes another project, never when its text looks like injected instructions, only with the person's ok when the
- * session read outside content or the independent check finds it suspicious, and straight into CLAUDE.md otherwise.
+ * describes another project, never when its text looks like injected instructions, nothing at all when it says what
+ * CLAUDE.md already says, only with the person's ok when they asked to confirm every change, when the session read
+ * outside content or when the independent check finds it suspicious, and straight into CLAUDE.md otherwise.
  */
 export function grimoireAction(args: {
   isLink: boolean
@@ -445,11 +451,14 @@ export function grimoireAction(args: {
   suspicious: readonly string[]
   external: readonly string[]
   secondOpinion?: string | null
+  unchanged?: boolean
+  alwaysConfirm?: boolean
 }): GrimoireAction {
   if (args.isLink) return 'link'
   if (!args.matchesProject) return 'missing'
   if (args.suspicious.length > 0) return 'blocked'
-  if (args.external.length > 0 || (args.secondOpinion ?? null) !== null) return 'review'
+  if (args.unchanged === true) return 'unchanged'
+  if (args.alwaysConfirm === true || args.external.length > 0 || (args.secondOpinion ?? null) !== null) return 'review'
   return 'write'
 }
 

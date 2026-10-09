@@ -1,6 +1,6 @@
 {
   "name": "context-guard",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Avvisa quando il contesto supera una soglia e, oltre una seconda soglia, scrive HANDOFF.md e aggiorna il grimorio in CLAUDE.md.",
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -39,6 +39,16 @@
       "title": "Controllo indipendente del grimorio",
       "description": "Fa giudicare ogni nuovo grimorio da un modello piccolo e separato; se lo trova sospetto il grimorio aspetta la tua conferma",
       "default": true
+    },
+    "confermaGrimorio": {
+      "type": "string",
+      "title": "Conferma del grimorio",
+      "description": "sempre: ogni modifica al grimorio aspetta il tuo ok. solo-se-serve: solo quando la sessione ha letto contenuti esterni o il controllo indipendente lo trova sospetto",
+      "options": [
+        "sempre",
+        "solo-se-serve"
+      ],
+      "default": "sempre"
     }
   },
   "author": {

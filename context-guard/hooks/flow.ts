@@ -43,11 +43,12 @@ export type Deps = {
   external: () => Promise<readonly string[]>
 }
 
-export type Settings = { handoffFile: string; updateClaudeMd: boolean }
+export type Settings = { handoffFile: string; updateClaudeMd: boolean; alwaysConfirm: boolean }
 
 export type GrimoireOutcome =
   | { kind: 'none' }
   | { kind: 'written'; where: string }
+  | { kind: 'unchanged'; where: string }
   | { kind: 'refused'; reason: 'link' | 'missing' | 'blocked'; where: string; detail: string }
   | { kind: 'review'; where: string; pending: Pending; diff: { added: string[]; removed: string[] } }
 
@@ -176,10 +177,21 @@ export async function generate(d: Deps, s: Settings, percent: number): Promise<O
   const isLink = await d.isLink(project.claudePath)
   const suspicious = v.isOk && !isLink ? suspiciousReasons(grimoire, await knownText(d, root, project.claudeMd)) : []
   const external = [...(await d.external())]
-  // The independent check costs a small model call: only for a grimoire that passed everything cheaper.
-  const opinion = v.isOk && !isLink && suspicious.length === 0 ? await d.secondOpinion(grimoire).catch(() => null) : null
+  const diff = lineDiff(current, grimoire)
+  const changes = current === null || diff.added.length + diff.removed.length > 0
+  // The independent check costs a small model call: only for a grimoire that passed everything cheaper and changes something.
+  const opinion =
+    v.isOk && !isLink && suspicious.length === 0 && changes ? await d.secondOpinion(grimoire).catch(() => null) : null
 
-  const action = grimoireAction({ isLink, matchesProject: v.isOk, suspicious, external, secondOpinion: opinion })
+  const action = grimoireAction({
+    isLink,
+    matchesProject: v.isOk,
+    suspicious,
+    external,
+    secondOpinion: opinion,
+    unchanged: current !== null && diff.added.length === 0 && diff.removed.length === 0,
+    alwaysConfirm: s.alwaysConfirm,
+  })
   const day = date.slice(0, 10)
 
   switch (action) {
@@ -189,13 +201,16 @@ export async function generate(d: Deps, s: Settings, percent: number): Promise<O
       return { kind: 'done', handoffFile, promptText, grimoire: { kind: 'refused', reason: 'missing', where, detail: describeMissing(v) } }
     case 'blocked':
       return { kind: 'done', handoffFile, promptText, grimoire: { kind: 'refused', reason: 'blocked', where, detail: suspicious.join('; ') } }
+    case 'unchanged':
+      return { kind: 'done', handoffFile, promptText, grimoire: { kind: 'unchanged', where } }
     case 'review': {
       const why = [
         ...(external.length > 0 ? [`contenuti da ${external.join(', ')}`] : []),
         ...(opinion !== null ? [`controllo indipendente: ${opinion}`] : []),
       ]
+      if (why.length === 0) why.push('ogni modifica al grimorio chiede la tua conferma')
       const pending: Pending = { claudePath: project.claudePath, text: grimoire, date: day, why }
-      return { kind: 'done', handoffFile, promptText, grimoire: { kind: 'review', where, pending, diff: lineDiff(current, grimoire) } }
+      return { kind: 'done', handoffFile, promptText, grimoire: { kind: 'review', where, pending, diff } }
     }
     case 'write':
       await d.write(project.claudePath, spliceSection(project.claudeMd, renderSection(grimoire, day)))

@@ -77,6 +77,7 @@ test('verifyGrimoire: too few paths to judge passes', () => {
 test('currentGrimoire: reads the body between the markers', () => {
   expect(currentGrimoire(`@AGENTS.md\n\n${SECTION_START}\n## G\ncorpo\n${SECTION_END}\n`)).toBe('## G\ncorpo')
   expect(currentGrimoire('@AGENTS.md\n')).toBe(null)
+  expect(currentGrimoire(`${SECTION_START}\n## Grimorio del progetto (aggiornato da context-guard il 2026-10-09)\n\n### A\n- x\n${SECTION_END}`)).toBe('### A\n- x')
   expect(currentGrimoire(null)).toBe(null)
 })
 

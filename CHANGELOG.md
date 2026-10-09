@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.0
+- Per impostazione predefinita ogni modifica al grimorio aspetta la tua conferma: nessun testo generato entra in CLAUDE.md senza il tuo ok. Opzione `confermaGrimorio` (`sempre` o `solo-se-serve`).
+- Un grimorio identico a quello attuale non chiede conferma e non viene riscritto, e non spende il controllo indipendente.
+- Il confronto ignora la riga di intestazione con la data, che prima faceva sembrare cambiato ogni grimorio.
+
 ## 0.6.0
 - Controllo indipendente: ogni grimorio che supera i filtri viene giudicato da Haiku senza sessione né strumenti. Se lo trova sospetto, il grimorio va in approvazione con il motivo. Opzione `aiCheck`.
 - Contano come contenuti esterni anche i file letti fuori dal progetto o in cartelle di terzi come `node_modules`, `vendor` e `Downloads`.

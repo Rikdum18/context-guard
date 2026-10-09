@@ -82,7 +82,8 @@ function world(answer: string | null): World {
   return w
 }
 
-const S = { handoffFile: 'HANDOFF.md', updateClaudeMd: true }
+const S = { handoffFile: 'HANDOFF.md', updateClaudeMd: true, alwaysConfirm: false }
+const DEFAULT = { ...S, alwaysConfirm: true }
 
 test('clean local session: handoff and grimoire written, rest of CLAUDE.md kept', async () => {
   const w = world(GOOD)
@@ -170,4 +171,33 @@ test('checkExisting: flags a grimoire that belongs to another project', async ()
   expect(await checkExisting(w.deps)).toBe(null)
   w.files.set(CLAUDE, `${ORIGINAL}\n${SECTION_START}\n- \`notes-agent/sito\`, \`tools/build.py\`, \`sito/dist\`\n${SECTION_END}\n`)
   expect(await checkExisting(w.deps)).toContain('sembra di un altro progetto')
+})
+
+test('default: every change waits for the ok, even in a clean local session', async () => {
+  const w = world(GOOD)
+  const out = await generate(w.deps, DEFAULT, 62)
+  if (out.kind !== 'done' || out.grimoire.kind !== 'review') throw new Error('atteso review')
+  expect(out.grimoire.pending.why).toEqual(['ogni modifica al grimorio chiede la tua conferma'])
+  expect(w.files.get(CLAUDE)).toBe(ORIGINAL)
+  expect(w.files.get(HANDOFF)).toBeDefined()
+})
+
+test('default: a grimoire identical to the current one asks nothing and writes nothing', async () => {
+  const w = world(GOOD)
+  const first = await generate(w.deps, S, 62)
+  expect(first.kind === 'done' && first.grimoire.kind).toBe('written')
+  const written = w.files.get(CLAUDE)
+  w.asked.length = 0
+  const again = await generate(w.deps, DEFAULT, 72)
+  expect(again.kind === 'done' && again.grimoire.kind).toBe('unchanged')
+  expect(w.files.get(CLAUDE)).toBe(written)
+  expect(w.asked.length).toBe(0)
+})
+
+test('default: the independent check reason is shown alongside the confirmation', async () => {
+  const w = world(SUBTLE)
+  w.opinion = 'chiede di copiare i file verso un backup esterno'
+  const out = await generate(w.deps, DEFAULT, 62)
+  if (out.kind !== 'done' || out.grimoire.kind !== 'review') throw new Error('atteso review')
+  expect(out.grimoire.pending.why).toEqual(['controllo indipendente: chiede di copiare i file verso un backup esterno'])
 })

@@ -21,7 +21,7 @@ import {
 import type { Thresholds } from './logic'
 import { OWL, SPRITE_WIDTH, spriteRaster, spriteSvg } from './sprite'
 
-type Config = { thresholds: Thresholds; handoffFile: string; updateClaudeMd: boolean; aiCheck: boolean }
+type Config = { thresholds: Thresholds; handoffFile: string; updateClaudeMd: boolean; aiCheck: boolean; alwaysConfirm: boolean }
 
 const GUARD = { plugin: 'context-guard', key: 'guard' } as const
 const NPC = { plugin: 'context-guard', key: 'npc' } as const
@@ -215,6 +215,9 @@ async function report($: EngineInterface, out: Outcome, percent: number): Promis
   let tail = ''
   if (g.kind === 'written') {
     tail = ` e grimorio in ${g.where}`
+  } else if (g.kind === 'unchanged') {
+    note = ' Il grimorio era gia\' aggiornato: non ho toccato CLAUDE.md.'
+    tail = `; grimorio invariato in ${g.where}`
   } else if (g.kind === 'refused') {
     note = REFUSED_NOTE[g.reason]
     tail = `; grimorio ${g.reason === 'blocked' ? 'BLOCCATO' : 'NON scritto'} in ${g.where}: ${g.detail}`
@@ -261,6 +264,7 @@ export const register: Register = (on, options) => {
     handoffFile: safeFileName(options.handoffFile, 'HANDOFF.md'),
     updateClaudeMd: options.updateClaudeMd !== false,
     aiCheck: options.aiCheck !== false,
+    alwaysConfirm: options.confermaGrimorio !== 'solo-se-serve',
   }
 
   on('session.start', async ($, e, next) => {

@@ -62,13 +62,17 @@ La mod scrive file nei tuoi progetti, quindi è costruita per non rompere niente
 
 ### Protezione dalle istruzioni iniettate
 
-Il grimorio finisce in `CLAUDE.md`, e le sessioni future lo leggono come istruzioni. Se nella sessione è entrato testo scritto da altri, per esempio una pagina web con istruzioni nascoste, quel testo non deve poter diventare una regola del progetto. Tre livelli indipendenti lo impediscono, e i primi due non si affidano a nessun modello:
+Il grimorio finisce in `CLAUDE.md`, e le sessioni future lo leggono come istruzioni. Se nella sessione è entrato testo scritto da altri, per esempio una pagina web con istruzioni nascoste, quel testo non deve poter diventare una regola del progetto.
+
+**La garanzia: nessuna modifica al grimorio entra in CLAUDE.md senza il tuo ok.** Ogni grimorio cambiato aspetta la tua conferma: il Bibliotecario mostra le righe aggiunte e tolte, e tu premi `A` per applicarle o `S` per scartarle. Se il grimorio nuovo dice le stesse cose di quello attuale, la mod non chiede niente e non scrive niente, quindi la conferma compare solo quando qualcosa cambia davvero.
+
+Prima di arrivare a te, ogni grimorio passa tre controlli. Bloccano subito ciò che è palesemente malevolo e ti dicono perché qualcosa è sospetto, così la tua conferma è informata. Con l'opzione `confermaGrimorio` impostata a `solo-se-serve` i controlli diventano l'unica difesa e la conferma scatta solo quando uno di loro lo richiede:
 
 - **Fonti esterne, approvazione obbligatoria.** La mod registra ogni strumento usato nella sessione. Se la sessione ha letto contenuti da fuori, il grimorio non viene scritto ma resta in attesa: il Bibliotecario mostra le righe aggiunte e tolte, e tu premi `A` per applicarle o `S` per scartarle. Contano come fonti esterne ricerche e pagine web, browser e tutti i connettori MCP come mail, documenti e chat, i comandi shell che scaricano, come `curl`, `wget`, `gh api` e `git pull`, e la lettura di file fuori dal progetto o dentro cartelle di codice di terzi come `node_modules`, `vendor` e `Downloads`. Se chiudi il dialogo, `/ctx-grimorio` lo riapre.
 - **Filtri sul testo, blocco.** Il grimorio viene scartato se chiede di ignorare istruzioni precedenti, di scaricare ed eseguire codice, di inviare token o password, o di disattivare protezioni e permessi. Lo stesso vale se contiene blocchi codificati, caratteri invisibili, HTML attivo, o indirizzi web ed email che il progetto non cita già in CLAUDE.md, README.md, AGENTS.md o package.json. Le regole che vietano qualcosa, come "non condividere mai il token", non vengono bloccate.
 - **Controllo indipendente, approvazione.** Ogni grimorio che ha superato i filtri viene giudicato da un modello piccolo e separato, Haiku, che non vede la sessione, non ha strumenti e riceve il testo come dati da giudicare. Se lo trova sospetto, per esempio perché chiede di copiare file verso terzi o di saltare le conferme, il grimorio va in approvazione con il motivo. Coglie le iniezioni scritte in modo da superare i filtri. Si disattiva con l'opzione `aiCheck`.
 
-Il residuo è un testo che supera insieme i filtri e il giudizio del modello indipendente, arrivato da un file del progetto stesso. Per quel caso resta utile guardare la sezione quando cambia, per esempio con `git diff CLAUDE.md`.
+Con l'impostazione predefinita `sempre` l'unico modo perché un testo malevolo entri in CLAUDE.md è che tu lo approvi: leggi le righe aggiunte prima di premere `A`. Con `solo-se-serve` resta possibile, ma molto difficile, che un testo superi insieme filtri e controllo indipendente.
 
 ## Installazione
 
@@ -100,6 +104,7 @@ Da `/plugin configure context-guard@riccardo-mods` in una sessione, oppure in `s
 | `handoffFile` | `HANDOFF.md` | Nome del file di handoff |
 | `updateClaudeMd` | true | Aggiorna il grimorio in CLAUDE.md |
 | `aiCheck` | true | Fa giudicare ogni nuovo grimorio dal controllo indipendente |
+| `confermaGrimorio` | `sempre` | `sempre`: ogni modifica al grimorio aspetta il tuo ok. `solo-se-serve`: solo dopo contenuti esterni o un giudizio sospetto |
 
 ## Come funziona
 
@@ -123,7 +128,7 @@ context-guard/
 │   ├── flow.ts                  percorso di scrittura, testabile senza il motore
 │   ├── logic.ts                 logica pura: soglie, prompt, merge dei file, controlli
 │   ├── sprite.ts                il gufo e i suoi renderer SVG e Raster
-│   └── *.test.ts                63 test, compreso il flusso completo
+│   └── *.test.ts                67 test, compreso il flusso completo
 └── types/index.d.ts             contratto dello stato in $.state
 ```
 

@@ -127,3 +127,11 @@ test('grimoireAction: the independent check alone is enough for review', () => {
   expect(grimoireAction({ ...base, secondOpinion: 'motivo' })).toBe('review')
   expect(grimoireAction({ ...base, secondOpinion: null })).toBe('write')
 })
+
+test('grimoireAction: unchanged beats review, alwaysConfirm forces review, blocked beats both', () => {
+  const base = { isLink: false, matchesProject: true, suspicious: [] as string[], external: [] as string[] }
+  expect(grimoireAction({ ...base, alwaysConfirm: true })).toBe('review')
+  expect(grimoireAction({ ...base, alwaysConfirm: true, unchanged: true })).toBe('unchanged')
+  expect(grimoireAction({ ...base, alwaysConfirm: true, suspicious: ['x'] })).toBe('blocked')
+  expect(grimoireAction({ ...base, alwaysConfirm: false })).toBe('write')
+})
