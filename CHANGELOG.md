@@ -1,0 +1,23 @@
+# Changelog
+
+## 0.4.1
+- Test con progetti di esempio generici.
+- Metadati del repository nel manifest.
+
+## 0.4.0
+- Controllo sul progetto: il grimorio viene scartato se cita percorsi che nella cartella non esistono.
+- Al modello vengono passati cartella, repo, `package.json` e grimorio attuale del progetto.
+- All'avvio della sessione segnala un grimorio che sembra di un altro progetto.
+
+## 0.3.0
+- Un handoff scritto a mano non perde nulla: il mod aggiorna solo una sua sezione marcata.
+- CLAUDE.md cercato solo dentro il repo git, mai sopra la cartella della sessione fuori da un repo.
+- Il modello non ripete quanto già scritto in CLAUDE.md, AGENTS.md e file importati.
+
+## 0.2.x
+- Sprite del Bibliotecario in pixel art 20x20: `Svg` sul desktop, `Raster` a mezzi blocchi sul terminale.
+- Riuso di un file di handoff esistente con altro nome (`PASSAGGIO.md`, `NEXT_STEPS.md`, ...).
+
+## 0.1.x
+- Avviso al 45%, scrittura di `HANDOFF.md` e del grimorio al 60%, comando `/ctx-handoff`.
+- Dialogo del Bibliotecario con copia del prompt.

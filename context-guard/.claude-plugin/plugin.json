@@ -1,0 +1,50 @@
+{
+  "name": "context-guard",
+  "version": "0.4.1",
+  "description": "Avvisa quando il contesto supera una soglia e, oltre una seconda soglia, scrive HANDOFF.md e aggiorna il grimorio in CLAUDE.md.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "warnAt": {
+      "type": "number",
+      "description": "Percentuale di contesto oltre cui mostrare l'avviso",
+      "default": 45,
+      "title": "Soglia avviso (%)"
+    },
+    "writeAt": {
+      "type": "number",
+      "description": "Percentuale di contesto oltre cui scrivere HANDOFF.md e il grimorio",
+      "default": 60,
+      "title": "Soglia scrittura (%)"
+    },
+    "repeatEvery": {
+      "type": "number",
+      "description": "Riscrive i file ogni N punti percentuali oltre la soglia di scrittura (0 = una sola volta)",
+      "default": 10,
+      "title": "Riscrivi ogni (punti %)"
+    },
+    "handoffFile": {
+      "type": "string",
+      "description": "Nome del file di handoff, relativo alla root del progetto",
+      "default": "HANDOFF.md",
+      "title": "File di handoff"
+    },
+    "updateClaudeMd": {
+      "type": "boolean",
+      "description": "Aggiorna la sezione grimorio delimitata dai marker in CLAUDE.md",
+      "default": true,
+      "title": "Aggiorna CLAUDE.md"
+    }
+  },
+  "author": {
+    "name": "Riccardo Storci"
+  },
+  "homepage": "https://github.com/Rikdum18/context-guard",
+  "repository": "https://github.com/Rikdum18/context-guard",
+  "license": "MIT",
+  "keywords": [
+    "context",
+    "handoff",
+    "claude-md",
+    "function-hooks"
+  ]
+}

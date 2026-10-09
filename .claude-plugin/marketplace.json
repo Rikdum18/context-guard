@@ -1,0 +1,14 @@
+{
+  "name": "riccardo-mods",
+  "description": "Mod personali per Claude Code",
+  "owner": {
+    "name": "Riccardo Storci"
+  },
+  "plugins": [
+    {
+      "name": "context-guard",
+      "source": "./context-guard",
+      "description": "Avvisa al 45% di contesto e al 60% scrive HANDOFF.md e il grimorio del progetto in CLAUDE.md, con il Bibliotecario che annuncia il passaggio di chat (/ctx-handoff)"
+    }
+  ]
+}
