@@ -1,6 +1,6 @@
 {
   "name": "context-guard",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "Avvisa quando il contesto supera una soglia e, oltre una seconda soglia, scrive HANDOFF.md e aggiorna il grimorio in CLAUDE.md.",
   "types": "./types/index.d.ts",
   "userConfig": {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0
+- Grimorio in attesa di conferma quando la sessione ha letto contenuti esterni: web, browser, connettori MCP, comandi shell che scaricano. Il Bibliotecario mostra le modifiche con i tasti Applica e Scarta.
+- Nuovo comando `/ctx-grimorio` per riaprire il grimorio in attesa.
+- Filtri che bloccano il grimorio se contiene istruzioni iniettate: ignorare istruzioni, eseguire codice scaricato, inviare credenziali, disattivare protezioni, blocchi codificati, caratteri invisibili, HTML attivo, indirizzi sconosciuti.
+- Le regole negative come "non condividere mai il token" non vengono bloccate.
+
 ## 0.4.2
 - Il nome del file di handoff configurato deve essere un semplice `.md` nella root: niente percorsi fuori dal progetto.
 - Nessuna scrittura attraverso link simbolici.

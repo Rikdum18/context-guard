@@ -330,3 +330,124 @@ export function safeFileName(name: unknown, fallback: string): string {
 export function stripMarkers(text: string): string {
   return text.replace(/<!--\s*context-guard:[^>]*-->/g, '')
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// External content and suspicious text
+
+const EXTERNAL_TOOLS = /^(WebFetch|WebSearch)$|^mcp__/
+const EXTERNAL_COMMAND =
+  /\b(curl|wget|http|httpie|lynx|links|w3m)\b|\bgh\s+(api|issue|pr|release|gist|search|repo\s+view)\b|\bgit\s+(clone|pull|fetch)\b|\b(npx|npm\s+(view|info)|pip\s+download)\b/
+
+/**
+ * Whether a tool call brings text from outside the machine into the session: web fetch and search, every MCP
+ * connector (browser, mail, docs, chats), and shell commands that download or read remote content.
+ */
+export function isExternalTool(tool: string, command: string | undefined): boolean {
+  if (EXTERNAL_TOOLS.test(tool)) return true
+  return tool === 'Bash' && command !== undefined && EXTERNAL_COMMAND.test(command)
+}
+
+/** A short label for the tool, for the person: `mcp__claude-in-chrome__navigate` reads `claude-in-chrome`. */
+export function externalLabel(tool: string): string {
+  const m = /^mcp__(.+?)__/.exec(tool)
+  return m?.[1] ?? tool
+}
+
+const HIDDEN_CHARS = /[​-‏‪-‮⁠-⁤﻿]/
+// Whole words only: never part of an identifier such as `login-token`, `share-text` or `api_key_name`.
+const WORD_START = '(?<![\\w/.-])'
+const WORD_END = '(?![\\w/.-])'
+const SECRET_WORD = `${WORD_START}(token|password|passw|api[ ]?key|secret|segreti?|credenziali?|chiavi? privat[ae]|private key|cookies?)${WORD_END}`
+const SEND_VERB = `${WORD_START}(invia(re|lo|la|li|le|te)?|manda(re|lo|la|li|le|te)?|incolla(re|lo|la|li|le|te)?|condividi(lo|la|li|le)?|condividere|inoltra(re|lo|la|li|le|te)?|send|paste|share|upload|post|forward)${WORD_END}`
+
+const NEGATION = /(?<![\w-])(non|mai|never|not|don't|dont|do not|nessun[oa]?|evita(re)?|avoid)(?![\w-])[^.\n:;,!?]{0,15}$/i
+
+/** A sentence that asks to send, paste or share a secret, unless it forbids it ("non condividere mai il token"). */
+function asksForSecrets(text: string): boolean {
+  for (const re of [
+    new RegExp(`${SEND_VERB}[^.\\n]{0,60}${SECRET_WORD}`, 'gi'),
+    new RegExp(`${SECRET_WORD}[^.\\n]{0,60}${SEND_VERB}`, 'gi'),
+  ]) {
+    for (const m of text.matchAll(re)) {
+      const lineStart = text.lastIndexOf('\n', m.index) + 1
+      const before = text.slice(lineStart, m.index)
+      if (!NEGATION.test(before) && !NEGATION.test(m[0].slice(0, 30))) return true
+    }
+  }
+  return false
+}
+
+const SUSPICIOUS: readonly { reason: string; test: (text: string) => boolean }[] = [
+  {
+    reason: 'chiede di ignorare istruzioni precedenti',
+    test: t => /\b(ignor\w*|disregard|dimentic\w*|forget|override|sovrascriv\w*)\b[^.\n]{0,40}\b(istruzion\w*|instruction\w*|regol\w*|rules?|prompt|system)\b/i.test(t),
+  },
+  {
+    reason: 'scarica ed esegue codice da internet',
+    test: t => /\b(curl|wget)\b[^\n]*\|\s*(ba|z|da)?sh\b|\b(curl|wget)\b[^\n]*&&\s*(ba|z)?sh\b|\biex\s*\(|invoke-expression/i.test(t),
+  },
+  {
+    reason: 'chiede di inviare credenziali',
+    test: t => asksForSecrets(t),
+  },
+  {
+    reason: 'disattiva protezioni o permessi',
+    test: t => /dangerously|bypass\s*permissions|skip[-_ ]permissions|--no-verify|disabl\w*[^.\n]{0,30}(sandbox|permess\w*|permission\w*|hook\w*)|chmod\s+777/i.test(t),
+  },
+  { reason: 'contiene un blocco codificato (base64 o simile)', test: t => /[A-Za-z0-9+/]{80,}={0,2}/.test(t) },
+  { reason: 'contiene caratteri invisibili', test: t => HIDDEN_CHARS.test(t) },
+  { reason: 'contiene HTML attivo', test: t => /<\s*(script|iframe|img|object|embed|style)\b|javascript:/i.test(t) },
+]
+
+/** URL hosts and email addresses in `text` that `known` never mentions: where a grimoire could point someone new. */
+export function unknownContacts(text: string, known: string): string[] {
+  const knownLower = known.toLowerCase()
+  const found = new Set<string>()
+  for (const m of text.matchAll(/https?:\/\/([a-z0-9.-]+)/gi)) {
+    const host = (m[1] ?? '').toLowerCase().replace(/^www\./, '').replace(/[.-]+$/, '')
+    if (host && !knownLower.includes(host)) found.add(host)
+  }
+  for (const m of text.matchAll(/\b[\w.+-]+@[\w-]+(\.[\w-]+)+\b/g)) {
+    const mail = m[0].toLowerCase()
+    if (!knownLower.includes(mail)) found.add(mail)
+  }
+  return [...found]
+}
+
+/** Why a grimoire looks like it carries injected instructions; empty when nothing is suspicious. */
+export function suspiciousReasons(text: string, knownText: string): string[] {
+  const reasons = SUSPICIOUS.filter(s => s.test(text)).map(s => s.reason)
+  const contacts = unknownContacts(text, knownText)
+  if (contacts.length > 0) reasons.push(`cita indirizzi che il progetto non conosce (${contacts.slice(0, 3).join(', ')})`)
+  return reasons
+}
+
+/** Lines added and removed between two versions, ignoring blank lines and order: enough to review a grimoire. */
+export function lineDiff(before: string | null, after: string): { added: string[]; removed: string[] } {
+  const clean = (s: string) => s.split('\n').map(l => l.trimEnd()).filter(l => l.trim() !== '')
+  const old = clean(before ?? '')
+  const neu = clean(after)
+  const oldSet = new Set(old)
+  const newSet = new Set(neu)
+  return { added: neu.filter(l => !oldSet.has(l)), removed: old.filter(l => !newSet.has(l)) }
+}
+
+export type GrimoireAction = 'link' | 'missing' | 'blocked' | 'review' | 'write'
+
+/**
+ * What happens to a freshly generated grimoire, in order of precedence: never through a symbolic link, never when it
+ * describes another project, never when its text looks like injected instructions, only with the person's ok when the
+ * session read outside content, and straight into CLAUDE.md otherwise.
+ */
+export function grimoireAction(args: {
+  isLink: boolean
+  matchesProject: boolean
+  suspicious: readonly string[]
+  external: readonly string[]
+}): GrimoireAction {
+  if (args.isLink) return 'link'
+  if (!args.matchesProject) return 'missing'
+  if (args.suspicious.length > 0) return 'blocked'
+  if (args.external.length > 0) return 'review'
+  return 'write'
+}

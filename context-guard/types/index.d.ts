@@ -15,10 +15,21 @@ export type Npc = {
   frame: number
   /** The prompt for the next chat, for the copy button; null when none was found. */
   promptText: string | null
+  /** The grimoire change waiting for the person's ok, shown as a diff; null when nothing waits. */
+  review: { added: string[]; removed: string[] } | null
+}
+
+/** A grimoire written in a session that read outside content: held until the person applies or discards it. */
+export type Pending = {
+  claudePath: string
+  text: string
+  date: string
+  /** The external sources the session read, as labels. */
+  sources: string[]
 }
 
 declare module 'claude-code' {
   interface PluginState {
-    'context-guard': { guard: GuardState; npc: Npc | null }
+    'context-guard': { guard: GuardState; npc: Npc | null; external: string[]; pending: Pending | null }
   }
 }

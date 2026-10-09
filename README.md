@@ -22,6 +22,7 @@ Nelle sessioni lunghe il contesto si riempie: le risposte peggiorano, la compatt
 | 60% | Il modello scrive l'handoff e aggiorna il grimorio, poi spunta il Bibliotecario. |
 | 70%, 80%, 90% | Riscrive gli stessi file, così restano aggiornati. |
 | `/ctx-handoff` | Fa tutto subito, a qualsiasi percentuale. |
+| `/ctx-grimorio` | Riapre il grimorio in attesa di conferma, da applicare o scartare. |
 
 Dopo un `/compact` o un `/clear` le soglie ripartono da zero.
 
@@ -43,6 +44,7 @@ Dopo un `/compact` o un `/clear` le soglie ripartono da zero.
 Quando i file sono scritti, un gufo in pixel art 20x20 scivola dentro da sinistra con un riquadro di dialogo in stile Pokémon. Il testo appare a macchina da scrivere, poi lampeggia il cursore ▼. Nell'app desktop è un `Svg`, sul terminale un `Raster` colorato a mezzi blocchi.
 
 - `C` copia il prompt per la nuova chat negli appunti.
+- `A` e `S` applicano o scartano il grimorio, quando è in attesa di conferma.
 - `O` o Esc chiude il dialogo.
 
 ## Le regole di sicurezza
@@ -58,7 +60,14 @@ La mod scrive file nei tuoi progetti, quindi è costruita per non rompere niente
 - **Niente scritture fuori dal progetto:** il nome del file di handoff deve essere un semplice `.md` nella cartella della sessione, e la mod non scrive mai attraverso un link simbolico.
 - **Marcatori protetti:** dal testo del modello vengono tolti tutti i marcatori `context-guard`, così una risposta non può chiudere la sezione in anticipo e toccare il resto del file.
 
-> **Attenzione:** il grimorio finisce in `CLAUDE.md` e le sessioni future lo leggono come istruzioni. Il modello ha l'istruzione di non trascrivere mai indicazioni provenienti da pagine web, file scaricati o output di strumenti, ma conviene comunque dare un'occhiata alla sezione quando cambia, per esempio con `git diff CLAUDE.md`.
+### Protezione dalle istruzioni iniettate
+
+Il grimorio finisce in `CLAUDE.md`, e le sessioni future lo leggono come istruzioni. Se nella sessione è entrato testo scritto da altri, per esempio una pagina web con istruzioni nascoste, quel testo non deve poter diventare una regola del progetto. Due controlli lo impediscono senza affidarsi al modello:
+
+- **Fonti esterne, approvazione obbligatoria.** La mod registra ogni strumento usato nella sessione. Se la sessione ha letto contenuti da fuori, il grimorio non viene scritto ma resta in attesa: il Bibliotecario mostra le righe aggiunte e tolte, e tu premi `A` per applicarle o `S` per scartarle. Contano come fonti esterne ricerche e pagine web, browser e tutti i connettori MCP come mail, documenti e chat, e i comandi shell che scaricano, come `curl`, `wget`, `gh api` e `git pull`. Se chiudi il dialogo, `/ctx-grimorio` lo riapre.
+- **Filtri sul testo, blocco.** Il grimorio viene scartato se chiede di ignorare istruzioni precedenti, di scaricare ed eseguire codice, di inviare token o password, o di disattivare protezioni e permessi. Lo stesso vale se contiene blocchi codificati, caratteri invisibili, HTML attivo, o indirizzi web ed email che il progetto non cita già in CLAUDE.md, README.md, AGENTS.md o package.json. Le regole che vietano qualcosa, come "non condividere mai il token", non vengono bloccate.
+
+Il residuo è testo malevolo già presente in un file locale del progetto e scritto in modo da superare i filtri. Per quel caso resta utile guardare la sezione quando cambia, per esempio con `git diff CLAUDE.md`.
 
 ## Installazione
 
@@ -94,6 +103,7 @@ Da `/plugin configure context-guard@riccardo-mods` in una sessione, oppure in `s
 
 È un plugin di *function hooks*: un modulo TypeScript che il motore di Claude Code carica ed esegue in un ambiente isolato, senza DOM e senza Node. Tutto passa dall'interfaccia `$` del motore.
 
+- **`tool.call`:** registra se la sessione usa strumenti che portano dentro contenuti esterni.
 - **`turn.complete`:** a fine turno legge il riempimento del contesto con `$.session.usage()` e decide se avvisare o scrivere.
 - **`$.model.fork`:** fa al modello una domanda sulla trascrizione della sessione stessa, così la richiesta riusa la cache dei prompt invece di rimandare tutto da capo.
 - **`$.fs`:** scrive i file e visita la cartella per il controllo sul progetto.
@@ -108,7 +118,7 @@ context-guard/
 │   ├── register.tsx             gli hook e il dialogo
 │   ├── logic.ts                 logica pura: soglie, prompt, merge dei file, controllo sul progetto
 │   ├── sprite.ts                il gufo e i suoi renderer SVG e Raster
-│   └── *.test.ts                40 test
+│   └── *.test.ts                50 test
 └── types/index.d.ts             contratto dello stato in $.state
 ```
 
