@@ -17,6 +17,8 @@ export type Npc = {
   promptText: string | null
   /** The grimoire change waiting for the person's ok, shown as a diff; null when nothing waits. */
   review: { added: string[]; removed: string[] } | null
+  /** The dialog proposes the handoff prompt: it shows the insert and send buttons. */
+  isProposal: boolean
 }
 
 /** A grimoire written in a session that read outside content: held until the person applies or discards it. */

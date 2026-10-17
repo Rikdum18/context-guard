@@ -6,6 +6,10 @@ import type { Deps, Outcome } from './flow'
 import {
   INITIAL_STATE,
   SECOND_OPINION_SYSTEM,
+  canFillBox,
+  handoffPromptOf,
+  modeOf,
+  proposalMessage,
   appendLine,
   animate,
   currentGrimoire,
@@ -22,7 +26,7 @@ import {
   secondOpinionPrompt,
   thresholdsOf,
 } from './logic'
-import type { Thresholds } from './logic'
+import type { Mode, Thresholds } from './logic'
 import { OWL, SPRITE_WIDTH, spriteRaster, spriteSvg } from './sprite'
 
 type Config = {
@@ -32,6 +36,8 @@ type Config = {
   aiCheck: boolean
   alwaysConfirm: boolean
   showButton: boolean
+  mode: Mode
+  handoffPrompt: string
 }
 
 const GUARD = { plugin: 'context-guard', key: 'guard' } as const
@@ -129,14 +135,16 @@ async function showNpc(
   message: string,
   promptText: string | null,
   review: Npc['review'] = null,
+  isProposal = false,
 ): Promise<void> {
   stopTicker()
-  const npc: Npc = { message, frame: 0, promptText, review }
+  const npc: Npc = { message, frame: 0, promptText, review, isProposal }
   await $.state.set(NPC, npc)
   const opened = await $.ui.open({
     id: PANE,
     title: 'Passaggio di chat',
-    focus: true,
+    // A proposal leaves the keys to the prompt box, so Enter sends the prompt it put there.
+    ...(isProposal ? {} : { focus: true as const }),
     closeOnEscape: true,
     holdToasts: true,
     rows: review === null ? 16 : 18 + Math.min(MAX_REVIEW_LINES, review.added.length + review.removed.length),
@@ -257,6 +265,30 @@ async function report($: EngineInterface, out: Outcome, percent: number): Promis
   return line
 }
 
+/** Puts the handoff prompt in the prompt box when it is free, and has the Librarian say so. */
+async function proposeHandoff($: EngineInterface, cfg: Config, percent: number | undefined): Promise<string> {
+  const box = await $.prompt.read()
+  const filled = canFillBox(box.text, cfg.handoffPrompt) ? (await $.prompt.fill({ text: cfg.handoffPrompt })).isFilled : false
+  if (percent !== undefined) await setGuard($, s => ({ ...s, lastWrittenAt: percent }))
+  const line = `context-guard: contesto al ${percent ?? '?'}%, prompt per l'handoff ${filled ? 'messo nella casella' : 'proposto'}`
+  $.ui.log(line)
+  await showNpc($, proposalMessage(percent, filled), cfg.handoffPrompt, null, true)
+  return line
+}
+
+/** The proposal's own buttons: put the prompt in the box (after a draft, never over it), or send it now. */
+async function insertProposal($: EngineInterface, cfg: Config): Promise<void> {
+  const box = await $.prompt.read()
+  const r = await $.prompt.fill({ text: cfg.handoffPrompt, mode: canFillBox(box.text, cfg.handoffPrompt) ? 'replace' : 'append' })
+  if (!r.isFilled) $.ui.toast('Non riesco a scrivere nella casella: usa "Copia prompt"')
+  await hideNpc($)
+}
+
+async function sendProposal($: EngineInterface, cfg: Config): Promise<void> {
+  await hideNpc($)
+  void $.prompt.submit({ text: cfg.handoffPrompt, asUser: true })
+}
+
 /** Runs the write path once: never twice at the same time, always leaving the status line as it found it. */
 async function writeFiles($: EngineInterface, cfg: Config, percent: number): Promise<string> {
   const state = await getGuard($)
@@ -336,6 +368,11 @@ async function askLibrarian($: EngineInterface, cfg: Config, question: string): 
 }
 
 async function librarianWriteHandoff($: EngineInterface, cfg: Config): Promise<void> {
+  if (cfg.mode !== 'automatico') {
+    await $.ui.close({ id: CHAT_PANE })
+    await proposeHandoff($, cfg, await percentNow($).catch(() => undefined))
+    return
+  }
   await say($, 'tu', 'Scrivi l\'handoff adesso.')
   const percent = (await percentNow($).catch(() => undefined)) ?? 0
   const line = await writeFiles($, cfg, percent)
@@ -371,12 +408,17 @@ export const register: Register = (on, options) => {
     aiCheck: options.aiCheck !== false,
     alwaysConfirm: options.confermaGrimorio !== 'solo-se-serve',
     showButton: options.pulsanteBibliotecario !== false,
+    mode: modeOf(options.modalita),
+    handoffPrompt: handoffPromptOf(options.promptPassaggio),
   }
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'ctx-handoff',
-      description: `Scrive subito ${cfg.handoffFile} e il grimorio in CLAUDE.md`,
+      description:
+        cfg.mode === 'automatico'
+          ? `Scrive subito ${cfg.handoffFile} e il grimorio in CLAUDE.md`
+          : "Mette nella casella il prompt per scrivere l'handoff e preparare la nuova chat",
     })
     await $.command.register({
       name: 'bibliotecario',
@@ -387,7 +429,7 @@ export const register: Register = (on, options) => {
       name: 'ctx-grimorio',
       description: 'Mostra il grimorio in attesa di conferma, da applicare o scartare',
     })
-    if (cfg.updateClaudeMd) {
+    if (cfg.mode === 'automatico' && cfg.updateClaudeMd) {
       // Its own dispatch, so the walk of the project never delays the session's first prompt.
       $.clock.after(1500, () => {
         void checkExistingGrimoire($, cfg).catch(err => $.ui.log(`context-guard: ${String(err)}`, { to: 'debug' }))
@@ -397,8 +439,15 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'ctx-handoff' }, async $ => {
-    const percent = (await percentNow($).catch(() => undefined)) ?? 0
-    const text = await writeFiles($, cfg, percent)
+    const percent = await percentNow($).catch(() => undefined)
+    if (cfg.mode !== 'automatico') {
+      // Queued past the command's own run, so the box is free again when the prompt goes in.
+      $.clock.after(100, () => {
+        void proposeHandoff($, cfg, percent).catch(err => $.ui.log(`context-guard: ${String(err)}`, { to: 'debug' }))
+      })
+      return { text: "context-guard: prompt per l'handoff in arrivo nella casella." }
+    }
+    const text = await writeFiles($, cfg, percent ?? 0)
     return { text }
   })
 
@@ -473,8 +522,10 @@ export const register: Register = (on, options) => {
         <Box marginTop={1}>{input}</Box>
         <Box flexDirection="row" gap={1} marginTop={1}>
           <Button key="status" label="Come siamo messi?" onPress={() => librarianStatusNow($, cfg)} />
-          <Button key="handoff" label="Scrivi handoff" onPress={() => librarianWriteHandoff($, cfg)} />
-          <Button key="pending" label="Grimorio in attesa" onPress={() => librarianPending($)} />
+          <Button key="handoff" label={cfg.mode === 'automatico' ? 'Scrivi handoff' : "Prompt per l'handoff"} onPress={() => librarianWriteHandoff($, cfg)} />
+          {cfg.mode === 'automatico' && (
+            <Button key="pending" label="Grimorio in attesa" onPress={() => librarianPending($)} />
+          )}
           <Button key="close" label="Chiudi" role="dismiss" onPress={() => $.ui.close({ id: CHAT_PANE })} />
         </Box>
       </Box>
@@ -484,6 +535,8 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'ctx-grimorio' }, async $ => ({ text: await showPending($) }))
 
   on('tool.call', async ($, e, next) => {
+    // Outside content only matters to a grimoire the mod writes itself.
+    if (cfg.mode !== 'automatico') return next(e)
     const command = 'command' in e && typeof e.command === 'string' ? e.command : undefined
     if (isExternalTool(e.tool, command)) {
       await markExternal($, externalLabel(e.tool))
@@ -513,16 +566,17 @@ export const register: Register = (on, options) => {
     if (d.warn) {
       await setGuard($, s => ({ ...s, warned: true }))
       $.ui.toast(
-        `Contesto al ${percent}%: oltre il ${cfg.thresholds.writeAt}% scrivo ${cfg.handoffFile}. Valuta /compact o /ctx-handoff.`,
+        cfg.mode === 'automatico'
+          ? `Contesto al ${percent}%: oltre il ${cfg.thresholds.writeAt}% scrivo ${cfg.handoffFile}. Valuta /compact o /ctx-handoff.`
+          : `Contesto al ${percent}%: al ${cfg.thresholds.writeAt}% ti preparo il prompt per l'handoff. /ctx-handoff lo prepara subito.`,
         { timeoutMs: 8000 },
       )
     }
     if (d.write && percent !== undefined) {
       // Its own dispatch: the turn ends now, and the fork is not cut by this hook's end.
       $.clock.after(50, () => {
-        void writeFiles($, cfg, percent).catch(err =>
-          $.ui.log(`context-guard: ${String(err)}`, { to: 'debug' }),
-        )
+        const run = cfg.mode === 'automatico' ? writeFiles($, cfg, percent) : proposeHandoff($, cfg, percent)
+        void run.catch(err => $.ui.log(`context-guard: ${String(err)}`, { to: 'debug' }))
       })
     }
 
@@ -608,6 +662,10 @@ export const register: Register = (on, options) => {
           {a.isDone && npc.review !== null && (
             <Button key="discard" label="Scarta" hotkey="s" onPress={() => discardPending($)} />
           )}
+          {a.isDone && npc.isProposal && (
+            <Button key="insert" label="Inserisci nel prompt" variant="primary" onPress={() => insertProposal($, cfg)} />
+          )}
+          {a.isDone && npc.isProposal && <Button key="send" label="Invia ora" onPress={() => sendProposal($, cfg)} />}
           {a.isDone && npc.promptText !== null && (
             <Button
               key="copy"

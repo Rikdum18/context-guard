@@ -578,3 +578,38 @@ export function librarianStatus(args: {
   ]
   return lines.join('\n')
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Proposing the handoff prompt instead of writing the files
+
+export const DEFAULT_HANDOFF_PROMPT =
+  "Scrivi Handoff o aggiornalo se c'è già con tutte le modifiche, cambiamenti e aggiunte importanti che abbiamo fatto. Poi scrivimi il prompt da mettere nell'altra chat per riprendere il lavoro da dove ci siamo interrotti."
+
+export type Mode = 'proponi-prompt' | 'automatico'
+
+/** The mode from the options: the old automatic writing only when asked for by name. */
+export function modeOf(value: unknown): Mode {
+  return value === 'automatico' ? 'automatico' : 'proponi-prompt'
+}
+
+/** The prompt to propose: the configured text when it says something, the default otherwise. */
+export function handoffPromptOf(value: unknown): string {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : DEFAULT_HANDOFF_PROMPT
+}
+
+/**
+ * Whether the prompt box may take the handoff prompt: only when it is empty or already holds that very prompt, so a
+ * draft the person is typing is never overwritten.
+ */
+export function canFillBox(boxText: string, prompt: string): boolean {
+  const t = boxText.trim()
+  return t === '' || t === prompt.trim()
+}
+
+/** What the Librarian says when it proposes the prompt. */
+export function proposalMessage(percent: number | undefined, filled: boolean): string {
+  const where = percent === undefined ? 'Il contesto si sta riempiendo' : `Il contesto e' al ${percent}%`
+  return filled
+    ? `${where}: e' ora di preparare il passaggio a una nuova chat. Ti ho messo nella casella il prompt per l'handoff: premi Invio per mandarlo.`
+    : `${where}: e' ora di preparare il passaggio a una nuova chat. Stai gia' scrivendo qualcosa, quindi non ho toccato la casella: usa "Inserisci nel prompt" quando vuoi, oppure copialo.`
+}

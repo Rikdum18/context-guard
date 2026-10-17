@@ -1,6 +1,6 @@
 # context-guard
 
-**Una mod per Claude Code che ti avvisa quando la chat si sta riempiendo e prepara da sola il passaggio alla chat successiva.**
+**Una mod per Claude Code che ti avvisa quando la chat si sta riempiendo e ti prepara il passaggio alla chat successiva.**
 
 > *In English:* a Claude Code plugin (function hooks) that watches the context window. At 45% it warns you; at 60% it asks the model to write a `HANDOFF.md` (what was done, what's next, a ready-to-paste prompt for a fresh chat) and to keep a short project "grimoire" up to date in `CLAUDE.md`. A pixel-art owl pops up, Pokémon-style, to tell you it's time to switch chats. Docs below are in Italian.
 
@@ -16,10 +16,27 @@ Nelle sessioni lunghe il contesto si riempie: le risposte peggiorano, la compatt
 
 ## Cosa fa
 
+La mod ha due modalità, scelte con l'opzione `modalita`.
+
+**`proponi-prompt`, la predefinita.** La mod non scrive nessun file da sola. Alla soglia il Bibliotecario ti mette nella casella del prompt questo testo, e ti basta premere Invio:
+
+> Scrivi Handoff o aggiornalo se c'è già con tutte le modifiche, cambiamenti e aggiunte importanti che abbiamo fatto. Poi scrivimi il prompt da mettere nell'altra chat per riprendere il lavoro da dove ci siamo interrotti.
+
+Se stai già scrivendo qualcosa, la casella non viene toccata: il dialogo offre "Inserisci nel prompt", "Invia ora" e "Copia prompt". Il testo si cambia con l'opzione `promptPassaggio`.
+
 | Contesto | Azione |
 | --- | --- |
 | 45% | Avviso una tantum. Da qui in poi la status line mostra `ctx NN%`. |
-| 60% | Il modello scrive l'handoff e aggiorna il grimorio, poi spunta il Bibliotecario. |
+| 60% | Il Bibliotecario ti propone il prompt per l'handoff. |
+| 70%, 80%, 90% | Te lo ripropone. |
+| `/ctx-handoff` | Te lo propone subito, a qualsiasi percentuale. |
+
+**`automatico`.** La mod scrive da sola `HANDOFF.md` e il grimorio del progetto in `CLAUDE.md`, con tutti i controlli descritti più sotto.
+
+| Contesto | Azione |
+| --- | --- |
+| 45% | Avviso una tantum. |
+| 60% | Il modello scrive l'handoff e propone il grimorio, poi spunta il Bibliotecario. |
 | 70%, 80%, 90% | Riscrive gli stessi file, così restano aggiornati. |
 | `/ctx-handoff` | Fa tutto subito, a qualsiasi percentuale. |
 | `/ctx-grimorio` | Riapre il grimorio in attesa di conferma, da applicare o scartare. |
@@ -27,7 +44,7 @@ Nelle sessioni lunghe il contesto si riempie: le risposte peggiorano, la compatt
 
 Dopo un `/compact` o un `/clear` le soglie ripartono da zero.
 
-### I due file
+### I due file (modalità automatica)
 
 **`HANDOFF.md`**, specifico della sessione: cosa è stato fatto, stato attuale, prossimi passi numerati e un blocco con il prompt per la chat nuova.
 
@@ -111,8 +128,10 @@ Da `/plugin configure context-guard@riccardo-mods` in una sessione, oppure in `s
 
 | Campo | Default | Significato |
 | --- | --- | --- |
+| `modalita` | `proponi-prompt` | `proponi-prompt`: ti propone il prompt per l'handoff. `automatico`: scrive da sola handoff e grimorio |
+| `promptPassaggio` | il testo qui sopra | Il prompt che il Bibliotecario ti propone alla soglia |
 | `warnAt` | 45 | Percentuale dell'avviso |
-| `writeAt` | 60 | Percentuale della prima scrittura |
+| `writeAt` | 60 | Percentuale del passaggio: proposta del prompt, o scrittura in modalità automatica |
 | `repeatEvery` | 10 | Riscrive ogni N punti oltre `writeAt`, 0 per scrivere una volta sola |
 | `handoffFile` | `HANDOFF.md` | Nome del file di handoff |
 | `updateClaudeMd` | true | Aggiorna il grimorio in CLAUDE.md |
@@ -143,7 +162,7 @@ context-guard/
 │   ├── flow.ts                  percorso di scrittura, testabile senza il motore
 │   ├── logic.ts                 logica pura: soglie, prompt, merge dei file, controlli
 │   ├── sprite.ts                il gufo e i suoi renderer SVG e Raster
-│   └── *.test.ts                71 test, compreso il flusso completo
+│   └── *.test.ts                75 test, compreso il flusso completo
 └── types/index.d.ts             contratto dello stato in $.state
 ```
 

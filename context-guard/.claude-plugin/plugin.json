@@ -1,9 +1,25 @@
 {
   "name": "context-guard",
-  "version": "0.8.0",
-  "description": "Avvisa quando il contesto supera una soglia e, oltre una seconda soglia, scrive HANDOFF.md e aggiorna il grimorio in CLAUDE.md.",
+  "version": "0.9.0",
+  "description": "Avvisa quando il contesto si riempie e alla soglia ti prepara nella casella il prompt per scrivere l'handoff e passare a una nuova chat, con il Bibliotecario.",
   "types": "./types/index.d.ts",
   "userConfig": {
+    "modalita": {
+      "type": "string",
+      "title": "Modalita'",
+      "description": "proponi-prompt: alla soglia ti mette nella casella il prompt per l'handoff, senza scrivere file. automatico: scrive HANDOFF.md e il grimorio da solo",
+      "options": [
+        "proponi-prompt",
+        "automatico"
+      ],
+      "default": "proponi-prompt"
+    },
+    "promptPassaggio": {
+      "type": "string",
+      "title": "Prompt per il passaggio",
+      "description": "Il testo che il Bibliotecario ti propone alla soglia",
+      "default": "Scrivi Handoff o aggiornalo se c'è già con tutte le modifiche, cambiamenti e aggiunte importanti che abbiamo fatto. Poi scrivimi il prompt da mettere nell'altra chat per riprendere il lavoro da dove ci siamo interrotti."
+    },
     "warnAt": {
       "type": "number",
       "description": "Percentuale di contesto oltre cui mostrare l'avviso",
@@ -12,13 +28,13 @@
     },
     "writeAt": {
       "type": "number",
-      "description": "Percentuale di contesto oltre cui scrivere HANDOFF.md e il grimorio",
+      "description": "Percentuale di contesto oltre cui proporre il prompt per l'handoff (o scrivere i file in modalita' automatica)",
       "default": 60,
-      "title": "Soglia scrittura (%)"
+      "title": "Soglia del passaggio (%)"
     },
     "repeatEvery": {
       "type": "number",
-      "description": "Riscrive i file ogni N punti percentuali oltre la soglia di scrittura (0 = una sola volta)",
+      "description": "Ripete la proposta ogni N punti percentuali oltre la soglia (0 = una sola volta)",
       "default": 10,
       "title": "Riscrivi ogni (punti %)"
     },
