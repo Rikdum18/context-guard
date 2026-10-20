@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.9.1
+- Nuovo prompt predefinito di fine sessione: aggiornare log.md e il file di consegna, scrivere il prompt di ripresa e avviare una nuova sessione con `start_session` in contesto "fresh".
+
 ## 0.9.0
 - Nuova modalità predefinita `proponi-prompt`: la mod non scrive più file da sola. Alla soglia mette nella casella del prompt il testo per scrivere l'handoff e preparare la nuova chat, senza mai toccare un testo che stai scrivendo.
 - Il dialogo della proposta non prende la tastiera, così basta Invio. Offre "Inserisci nel prompt", "Invia ora" e "Copia prompt".

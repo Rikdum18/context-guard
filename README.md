@@ -18,9 +18,9 @@ Nelle sessioni lunghe il contesto si riempie: le risposte peggiorano, la compatt
 
 La mod ha due modalità, scelte con l'opzione `modalita`.
 
-**`proponi-prompt`, la predefinita.** La mod non scrive nessun file da sola. Alla soglia il Bibliotecario ti mette nella casella del prompt questo testo, e ti basta premere Invio:
+**`proponi-prompt`, la predefinita.** La mod non scrive nessun file da sola. Alla soglia il Bibliotecario ti mette nella casella del prompt questo testo di fine sessione, e ti basta premere Invio:
 
-> Scrivi Handoff o aggiornalo se c'è già con tutte le modifiche, cambiamenti e aggiunte importanti che abbiamo fatto. Poi scrivimi il prompt da mettere nell'altra chat per riprendere il lavoro da dove ci siamo interrotti.
+> Alla fine di ogni sessione di lavoro: aggiorna log.md e il file di consegna, scrivi il prompt di ripresa (stato, vincoli, cosa fare oggi) e avvia una nuova sessione con start_session, contesto “fresh”, con quel prompt come brief e lo stato in background. Usa initiation: "user_asked" solo se l’utente ha chiesto di ripartire; altrimenti "offer", così sceglie lui.
 
 Se stai già scrivendo qualcosa, la casella non viene toccata: il dialogo offre "Inserisci nel prompt", "Invia ora" e "Copia prompt". Il testo si cambia con l'opzione `promptPassaggio`.
 

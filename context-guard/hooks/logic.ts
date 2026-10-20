@@ -583,7 +583,7 @@ export function librarianStatus(args: {
 // Proposing the handoff prompt instead of writing the files
 
 export const DEFAULT_HANDOFF_PROMPT =
-  "Scrivi Handoff o aggiornalo se c'è già con tutte le modifiche, cambiamenti e aggiunte importanti che abbiamo fatto. Poi scrivimi il prompt da mettere nell'altra chat per riprendere il lavoro da dove ci siamo interrotti."
+  "Alla fine di ogni sessione di lavoro: aggiorna log.md e il file di consegna, scrivi il prompt di ripresa (stato, vincoli, cosa fare oggi) e avvia una nuova sessione con start_session, contesto “fresh”, con quel prompt come brief e lo stato in background. Usa initiation: \"user_asked\" solo se l’utente ha chiesto di ripartire; altrimenti \"offer\", così sceglie lui."
 
 export type Mode = 'proponi-prompt' | 'automatico'
 
@@ -610,6 +610,6 @@ export function canFillBox(boxText: string, prompt: string): boolean {
 export function proposalMessage(percent: number | undefined, filled: boolean): string {
   const where = percent === undefined ? 'Il contesto si sta riempiendo' : `Il contesto e' al ${percent}%`
   return filled
-    ? `${where}: e' ora di preparare il passaggio a una nuova chat. Ti ho messo nella casella il prompt per l'handoff: premi Invio per mandarlo.`
-    : `${where}: e' ora di preparare il passaggio a una nuova chat. Stai gia' scrivendo qualcosa, quindi non ho toccato la casella: usa "Inserisci nel prompt" quando vuoi, oppure copialo.`
+    ? `${where}: e' ora di chiudere la sessione e preparare la ripresa. Ti ho messo nella casella il prompt di fine sessione: premi Invio per mandarlo.`
+    : `${where}: e' ora di chiudere la sessione e preparare la ripresa. Stai gia' scrivendo qualcosa, quindi non ho toccato la casella: usa "Inserisci nel prompt" quando vuoi, oppure copialo.`
 }
